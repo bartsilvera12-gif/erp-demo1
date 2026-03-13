@@ -52,3 +52,8 @@ body {
   color: var(--foreground);
   font-family: var(--font-plus-jakarta), system-ui, sans-serif;
 }
+
+/* Sidebar - colores fijos según referencia */
+.sidebar-neura {
+  background-color: var(--sidebar) !important;
+}

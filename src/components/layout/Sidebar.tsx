@@ -229,23 +229,23 @@ export default function Sidebar() {
       initial={false}
       animate={{ width: collapsed ? 72 : 256 }}
       transition={{ duration: 0.2 }}
-      className="flex shrink-0 flex-col border-r border-slate-200/10 bg-[#0F172A] dark:bg-[#020617]"
+      className="sidebar-neura flex shrink-0 flex-col border-r border-white/5"
     >
-      {/* Logo - más grande y bien integrado (referencia Platelink) */}
+      {/* Logo SVG sin fondo - integrado en sidebar oscuro */}
       <div className="flex h-20 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-        <Link href="/" className={`flex items-center overflow-hidden min-w-0 ${collapsed ? "flex-1 justify-center" : "gap-4"}`}>
-          <div className="relative shrink-0 flex items-center" style={{ height: 44, width: collapsed ? 44 : 88 }}>
+        <Link href="/" className={`flex items-center min-w-0 ${collapsed ? "flex-1 justify-center" : "gap-3"}`}>
+          <div className="relative shrink-0 flex items-center" style={{ height: 40, width: collapsed ? 40 : 72 }}>
             <Image
-              src="/neura-logo.png"
+              src="/neura-logo.svg"
               alt="Neura"
-              width={88}
-              height={44}
-              className="h-11 w-auto max-w-full object-contain object-left"
+              width={72}
+              height={40}
+              className="h-10 w-auto max-w-full object-contain object-left"
               priority
             />
           </div>
           {!collapsed && (
-            <span className="text-lg font-extrabold tracking-tight text-white truncate">NEURA ERP</span>
+            <span className="text-base font-extrabold tracking-tight text-white whitespace-nowrap">NEURA ERP</span>
           )}
         </Link>
         <button
