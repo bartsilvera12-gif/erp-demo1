@@ -182,7 +182,13 @@ function AreaChart({
 
 function DonutChart({
   segments,
-}: { segments: { label: string; value: number; color: string }[] }) {
+  centerLabel = "total",
+  formatValue = (v: number) => String(v),
+}: {
+  segments: { label: string; value: number; color: string }[];
+  centerLabel?: string;
+  formatValue?: (v: number) => string;
+}) {
   const total = segments.reduce((s, g) => s + g.value, 0);
   if (total === 0) return (
     <div className="flex items-center gap-6">
@@ -210,15 +216,15 @@ function DonutChart({
             />
           );
         })}
-        <text x={CX} y={CY + 6} textAnchor="middle" fontSize="20" fontWeight="bold" fill="#1f2937">{total}</text>
-        <text x={CX} y={CY + 18} textAnchor="middle" fontSize="9" fill="#9ca3af">facturas</text>
+        <text x={CX} y={CY + 6} textAnchor="middle" fontSize="16" fontWeight="bold" fill="#1f2937">{formatValue(total)}</text>
+        <text x={CX} y={CY + 18} textAnchor="middle" fontSize="9" fill="#9ca3af">{centerLabel}</text>
       </svg>
       <div className="space-y-2.5">
         {segments.map((seg, i) => (
           <div key={i} className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
-            <span className="text-xs text-gray-600 min-w-[60px]">{seg.label}</span>
-            <span className="text-xs font-bold text-gray-800 tabular-nums">{seg.value}</span>
+            <span className="text-xs text-gray-600 min-w-[60px] truncate" title={seg.label}>{seg.label}</span>
+            <span className="text-xs font-bold text-gray-800 tabular-nums">{formatValue(seg.value)}</span>
           </div>
         ))}
       </div>
@@ -247,6 +253,40 @@ function ProgressBar({ label, value, meta, format = "number" }: {
         <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
       </div>
       <p className="text-xs text-gray-400 mt-1">{pct.toFixed(0)}% de la meta</p>
+    </div>
+  );
+}
+
+/** Gauge semicircular tipo Power BI: valor actual, meta, porcentaje alcanzado */
+function GaugeChart({ label, value, meta, format = "number" }: {
+  label: string; value: number; meta: number; format?: "number" | "gs" | "pct";
+}) {
+  const pct = meta > 0 ? Math.min((value / meta) * 100, 100) : 0;
+  const fmt = (n: number) =>
+    format === "gs"  ? `Gs. ${formatGsM(n)}` :
+    format === "pct" ? `${n.toFixed(1)}%`    : String(n);
+  const strokeColor = pct >= 100 ? "#22c55e" : pct >= 70 ? "#f59e0b" : "#0EA5E9";
+  const W = 180, H = 110, CX = W / 2, CY = H - 12, R = 65;
+  const pathSemi = `M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY}`;
+
+  return (
+    <div className="flex flex-col items-center">
+      <span className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-2">{label}</span>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full max-w-[180px]" style={{ height: 110 }}>
+        <path d={pathSemi} fill="none" stroke="#e5e7eb" strokeWidth="14" strokeLinecap="round" pathLength={100} />
+        <path
+          d={pathSemi}
+          fill="none"
+          stroke={strokeColor}
+          strokeWidth="14"
+          strokeLinecap="round"
+          pathLength={100}
+          strokeDasharray={`${pct} 100`}
+        />
+        <text x={CX} y={CY - 14} textAnchor="middle" fontSize="16" fontWeight="bold" fill="#1f2937">{fmt(value)}</text>
+        <text x={CX} y={CY + 2} textAnchor="middle" fontSize="9" fill="#9ca3af">Meta: {fmt(meta)}</text>
+        <text x={CX} y={CY + 16} textAnchor="middle" fontSize="11" fontWeight="600" fill={strokeColor}>{pct.toFixed(0)}% alcanzado</text>
+      </svg>
     </div>
   );
 }
@@ -338,6 +378,20 @@ function DashComercial({
       })),
     [prospectosFilt]
   );
+
+  // Top planes en negociación (agrupado por plan, ordenado por SUM(valor_estimado))
+  const topPlanesEnNegociacion = useMemo(() => {
+    const enNeg = prospectosFilt.filter(p => p.etapa === "NEGOCIACION");
+    const porPlan: Record<string, number> = {};
+    for (const p of enNeg) {
+      const plan = (p.servicio ?? "").trim() || "Otros";
+      porPlan[plan] = (porPlan[plan] ?? 0) + (p.valor_estimado ?? 0);
+    }
+    return Object.entries(porPlan)
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+  }, [prospectosFilt]);
 
   // Top planes vendidos del mes (prospectos GANADO en mes actual, por cantidad de cierres)
   const topPlanesVendidos = useMemo(() => {
@@ -434,14 +488,12 @@ function DashComercial({
           variation={tasaConversion >= config.meta_conversion_leads ? 5 : -2} />
       </div>
 
-      {/* Metas comerciales */}
+      {/* Metas comerciales — gauge charts tipo Power BI */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 p-6">
-        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Progreso de metas</h3>
-        <div className="grid grid-cols-2 gap-6">
-          <ProgressBar label="Clientes nuevos" value={clientesGanados}
-            meta={config.meta_clientes_nuevos} />
-          <ProgressBar label="Conversión de leads" value={tasaConversion}
-            meta={config.meta_conversion_leads} format="pct" />
+        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-6">Progreso de metas</h3>
+        <div className="grid grid-cols-2 gap-8">
+          <GaugeChart label="Clientes nuevos" value={clientesGanados} meta={config.meta_clientes_nuevos} />
+          <GaugeChart label="Conversión de leads" value={tasaConversion} meta={config.meta_conversion_leads} format="pct" />
         </div>
       </div>
 
@@ -495,6 +547,24 @@ function DashComercial({
           <HBarChart data={topPlanesVendidos} color="bg-green-500" />
         </motion.div>
       </div>
+
+      {/* Top planes en negociación */}
+      <motion.div whileHover={{ y: -2 }} className="bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 p-6">
+        <h3 className="text-xs font-bold text-[#475569] uppercase tracking-wider mb-4">Top planes en negociación</h3>
+        {topPlanesEnNegociacion.length === 0 ? (
+          <p className="text-sm text-gray-400 py-4 text-center">Sin prospectos en negociación</p>
+        ) : (
+          <DonutChart
+            segments={topPlanesEnNegociacion.map((d, i) => ({
+              label: d.label,
+              value: d.value,
+              color: ["#F59E0B", "#F97316", "#FB923C", "#FDBA74", "#FED7AA"][i] ?? "#9ca3af",
+            }))}
+            centerLabel="monto total"
+            formatValue={(v) => formatGsM(v)}
+          />
+        )}
+      </motion.div>
 
       {/* Top clientes + Timeline */}
       <div className="grid grid-cols-2 gap-4">
@@ -693,7 +763,7 @@ function DashFinanciero({
             { label: "Pagadas",   value: pagadas,    color: "#22c55e" },
             { label: "Pendientes",value: pendientes,  color: "#f59e0b" },
             { label: "Vencidas",  value: vencidas,    color: "#ef4444" },
-          ]} />
+          ]} centerLabel="facturas" />
         </motion.div>
       </div>
 
@@ -814,7 +884,7 @@ function DashInventario({
             { label: "Saludable", value: cntSaludable, color: "#22c55e" },
             { label: "Bajo",      value: cntBajo,      color: "#f59e0b" },
             { label: "Crítico",   value: cntCritico,   color: "#ef4444" },
-          ]} />
+          ]} centerLabel="productos" />
         </motion.div>
         <motion.div whileHover={{ y: -2 }} className="col-span-2 bg-white border border-slate-200 rounded-xl shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 p-6 transition-shadow hover:shadow-md">
           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4">

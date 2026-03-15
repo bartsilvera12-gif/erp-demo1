@@ -1,4 +1,5 @@
 import { queryEmpresa } from "@/lib/db/empresa";
+import { getProspectos } from "@/lib/crm/storage";
 
 // ── Tipos de salida (estructura esperada por el Dashboard en page.tsx) ────────
 
@@ -127,9 +128,23 @@ function toDateStr(v: string | null | undefined): string {
  * Ventas incluyen la propiedad `lineas` construida desde ventas_items.
  */
 export async function getDashboardData(): Promise<DashboardData> {
-  const [prospectosQ, clientesQ, facturasQ, tipificacionesQ, productosQ, ventasQ, ventasItemsQ, comprasQ, gastosQ] =
+  // Prospectos desde el mismo origen que el CRM (getProspectos) para garantizar consistencia
+  const prospectosFromCrm = await getProspectos();
+  const prospectos: ProspectoRaw[] = prospectosFromCrm.map((p) => ({
+    id: p.id,
+    empresa: p.empresa,
+    contacto: p.contacto,
+    etapa: p.etapa,
+    servicio: p.servicio,
+    valor_estimado: p.valor_estimado ?? 0,
+    fecha_creacion: p.fecha_creacion ?? "",
+    fecha_actualizacion: p.fecha_actualizacion ?? "",
+    responsable: p.responsable,
+    cliente_creado: p.cliente_creado,
+  }));
+
+  const [clientesQ, facturasQ, tipificacionesQ, productosQ, ventasQ, ventasItemsQ, comprasQ, gastosQ] =
     await Promise.all([
-      (await queryEmpresa("crm_prospectos")).select("*"),
       (await queryEmpresa("clientes")).select("*"),
       (await queryEmpresa("facturas")).select("*"),
       (await queryEmpresa("tipificaciones")).select("*"),
@@ -140,7 +155,6 @@ export async function getDashboardData(): Promise<DashboardData> {
       (await queryEmpresa("gastos")).select("id, monto, fecha"),
     ]);
 
-  if (prospectosQ.error) throw new Error(prospectosQ.error.message);
   if (clientesQ.error) throw new Error(clientesQ.error.message);
   if (facturasQ.error) throw new Error(facturasQ.error.message);
   if (tipificacionesQ.error) throw new Error(tipificacionesQ.error.message);
@@ -148,19 +162,6 @@ export async function getDashboardData(): Promise<DashboardData> {
   if (ventasQ.error) throw new Error(ventasQ.error.message);
   if (ventasItemsQ.error) throw new Error(ventasItemsQ.error.message);
   if (comprasQ.error) throw new Error(comprasQ.error.message);
-
-  const prospectos: ProspectoRaw[] = (prospectosQ.data ?? []).map((r: Record<string, unknown>) => ({
-    id: r.id as string,
-    empresa: (r.empresa as string) ?? "",
-    contacto: r.contacto as string | undefined,
-    etapa: (r.etapa as string) ?? "LEAD",
-    servicio: r.servicio as string | undefined,
-    valor_estimado: typeof r.valor_estimado === "number" ? r.valor_estimado : 0,
-    fecha_creacion: toDateStr(r.fecha_creacion as string) || toDateStr(r.created_at as string),
-    fecha_actualizacion: toDateStr(r.fecha_actualizacion as string) || toDateStr(r.updated_at as string) || toDateStr(r.fecha_creacion as string),
-    responsable: r.responsable as string | undefined,
-    cliente_creado: Boolean(r.cliente_creado),
-  }));
 
   const clientes: ClienteRaw[] = (clientesQ.data ?? []).map((r: Record<string, unknown>) => ({
     id: r.id as string,
