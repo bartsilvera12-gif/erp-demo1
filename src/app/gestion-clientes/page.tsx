@@ -252,7 +252,7 @@ function ModalFacturacion({
                       </span>
                     </div>
                     <div className="shrink-0 text-sm font-semibold text-gray-700 tabular-nums">
-                      {data.suscripcion.moneda === "USD" ? "USD" : "Gs."} {data.suscripcion.precio.toLocaleString("es-PY")}
+                      {data.suscripcion?.moneda === "USD" ? "USD" : "Gs."} {(data.suscripcion?.precio ?? 0).toLocaleString("es-PY")}
                     </div>
                     <div className="shrink-0">
                       {item.estado === "proyectada" && (
