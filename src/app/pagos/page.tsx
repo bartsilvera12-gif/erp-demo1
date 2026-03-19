@@ -11,15 +11,31 @@ import type { Factura } from "@/lib/gestion-clientes/types";
 const inputClass = "w-full border border-slate-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-[#0EA5E9] focus:outline-none bg-white text-sm";
 const labelClass = "block text-xs font-medium text-slate-500 mb-1";
 
+type TabPagos = "pendientes" | "cobrados";
+
 function formatFecha(str: string) {
   if (!str) return "—";
   const [y, m, d] = str.split("-");
   return `${d}/${m}/${y}`;
 }
 
+interface PagoCobrado {
+  id: string;
+  factura_numero: string;
+  cliente_nombre: string;
+  monto: number;
+  fecha_pago: string;
+  metodo_pago: string;
+  usuario_email: string;
+  referencia?: string;
+}
+
 export default function PagosPage() {
+  const [tab, setTab] = useState<TabPagos>("pendientes");
   const [facturas, setFacturas] = useState<Factura[]>([]);
   const [clientes, setClientes] = useState<{ id: string; nombre: string }[]>([]);
+  const [cobrados, setCobrados] = useState<PagoCobrado[]>([]);
+  const [cargandoCobrados, setCargandoCobrados] = useState(false);
   const [modalPago, setModalPago] = useState(false);
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<Factura | null>(null);
   const [formPago, setFormPago] = useState({ monto: "", fecha_pago: "", metodo_pago: "efectivo" as const, referencia: "" });
@@ -30,6 +46,38 @@ export default function PagosPage() {
     getClientes().then((c) => setClientes(c.map((x) => ({ id: x.id, nombre: (x.empresa ?? x.nombre_contacto) || "—" }))));
   }, []);
 
+  async function fetchCobrados() {
+    setCargandoCobrados(true);
+    try {
+      const res = await fetch("/api/pagos");
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        setCobrados(
+          json.data.map((p: Record<string, unknown>) => ({
+            id: p.id as string,
+            factura_numero: (p.factura_numero as string) ?? "—",
+            cliente_nombre: (p.cliente_nombre as string) ?? "—",
+            monto: Number(p.monto) || 0,
+            fecha_pago: (p.fecha_pago as string) ?? "",
+            metodo_pago: (p.metodo_pago as string) ?? "efectivo",
+            usuario_email: (p.usuario_email as string) ?? "—",
+            referencia: (p.referencia as string) || undefined,
+          }))
+        );
+      } else {
+        setCobrados([]);
+      }
+    } catch {
+      setCobrados([]);
+    } finally {
+      setCargandoCobrados(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "cobrados") fetchCobrados();
+  }, [tab]);
+
   const pendientes = facturas.filter((f) => f.saldo > 0);
   const clienteMap = Object.fromEntries(clientes.map((c) => [c.id, c.nombre]));
 
@@ -37,19 +85,37 @@ export default function PagosPage() {
     e.preventDefault();
     const f = facturaSeleccionada;
     if (!f) return;
+    const monto = parseFloat(formPago.monto) || 0;
+    if (monto > f.saldo) {
+      alert("El monto del pago no puede superar el saldo pendiente de la factura.");
+      return;
+    }
     setGuardando(true);
-    await apiCreatePago({
+    const result = await apiCreatePago({
       factura_id: f.id,
-      monto: parseFloat(formPago.monto) || 0,
+      monto,
       fecha_pago: formPago.fecha_pago,
       metodo_pago: formPago.metodo_pago,
       referencia: formPago.referencia || undefined,
     });
-    setModalPago(false);
-    setFacturaSeleccionada(null);
-    getFacturas().then(setFacturas);
     setGuardando(false);
+    if (result) {
+      setModalPago(false);
+      setFacturaSeleccionada(null);
+      getFacturas().then(setFacturas);
+      if (tab === "cobrados") fetchCobrados();
+    } else {
+      alert("Error al registrar el pago. Verifique que el monto no supere el saldo.");
+    }
   }
+
+  const METODO_LABELS: Record<string, string> = {
+    efectivo: "Efectivo",
+    transferencia: "Transferencia",
+    cheque: "Cheque",
+    tarjeta: "Tarjeta",
+    otro: "Otro",
+  };
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -58,6 +124,28 @@ export default function PagosPage() {
         <p className="text-sm text-gray-500 mt-0.5">Registrar pagos de facturas pendientes de cobro</p>
       </div>
 
+      <div className="flex gap-3 border-b border-slate-200">
+        <button
+          type="button"
+          onClick={() => setTab("pendientes")}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            tab === "pendientes" ? "bg-white border border-slate-200 border-b-white -mb-px text-[#0EA5E9]" : "text-slate-600 hover:text-slate-800"
+          }`}
+        >
+          Pendientes
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("cobrados")}
+          className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+            tab === "cobrados" ? "bg-white border border-slate-200 border-b-white -mb-px text-[#0EA5E9]" : "text-slate-600 hover:text-slate-800"
+          }`}
+        >
+          Cobrados
+        </button>
+      </div>
+
+      {tab === "pendientes" && (
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700">Facturas pendientes de cobro</h2>
@@ -116,6 +204,49 @@ export default function PagosPage() {
           </div>
         )}
       </div>
+      )}
+
+      {tab === "cobrados" && (
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-700">Pagos registrados</h2>
+            <span className="text-xs text-slate-500">{cobrados.length} pagos</span>
+          </div>
+          {cargandoCobrados ? (
+            <div className="p-12 text-center text-slate-500 text-sm">Cargando…</div>
+          ) : cobrados.length === 0 ? (
+            <div className="p-12 text-center text-slate-500">
+              <p className="text-sm">No hay pagos registrados.</p>
+              <span className="text-xs mt-2 block">Los pagos aparecerán aquí cuando los registres.</span>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    {["Factura", "Cliente", "Monto pagado", "Fecha", "Método", "Usuario", "Referencia"].map((h) => (
+                      <th key={h} className="text-left text-xs font-semibold text-slate-600 px-4 py-3">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {cobrados.map((p) => (
+                    <tr key={p.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-mono text-slate-800">{p.factura_numero}</td>
+                      <td className="px-4 py-3 text-slate-700 truncate max-w-[140px]">{p.cliente_nombre}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-800">Gs. {p.monto.toLocaleString("es-PY")}</td>
+                      <td className="px-4 py-3 text-slate-600">{formatFecha(p.fecha_pago)}</td>
+                      <td className="px-4 py-3 text-slate-600">{METODO_LABELS[p.metodo_pago] ?? p.metodo_pago}</td>
+                      <td className="px-4 py-3 text-slate-600">{p.usuario_email}</td>
+                      <td className="px-4 py-3 text-slate-500">{p.referencia || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {modalPago && facturaSeleccionada && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setModalPago(false)}>

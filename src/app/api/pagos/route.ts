@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
     const supabase = getSupabase();
     let query = supabase
       .from("pagos")
-      .select("*")
+      .select("*, facturas(numero_factura, cliente_id)")
       .eq("empresa_id", auth.empresa_id)
       .order("fecha_pago", { ascending: false });
 
@@ -39,7 +39,41 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(errorResponse(error.message), { status: 400 });
     }
 
-    return NextResponse.json(successResponse(data ?? []));
+    const pagos = (data ?? []) as Array<Record<string, unknown> & { usuario_id?: string; factura_id?: string }>;
+    const clienteIds = [...new Set(pagos.map((p) => {
+      const f = p.facturas as { cliente_id?: string } | null;
+      return f?.cliente_id;
+    }).filter(Boolean))] as string[];
+
+    let clienteMap: Record<string, { empresa?: string; nombre_contacto?: string }> = {};
+    if (clienteIds.length > 0) {
+      const { data: clientesData } = await supabase.from("clientes").select("id, empresa, nombre_contacto").in("id", clienteIds);
+      clienteMap = Object.fromEntries((clientesData ?? []).map((c: { id: string; empresa?: string; nombre_contacto?: string }) => [c.id, { empresa: c.empresa, nombre_contacto: c.nombre_contacto }]));
+    }
+    const usuarioIds = [...new Set(pagos.map((p) => p.usuario_id).filter(Boolean))] as string[];
+    const usuarioMap: Record<string, string> = {};
+    for (const uid of usuarioIds) {
+      try {
+        const { data: u } = await supabase.auth.admin.getUserById(uid);
+        usuarioMap[uid] = u?.user?.email ?? uid.slice(0, 8);
+      } catch {
+        usuarioMap[uid] = "—";
+      }
+    }
+
+    const enriched = pagos.map((p) => {
+      const factura = p.facturas as { numero_factura?: string; cliente_id?: string } | null;
+      const clienteId = factura?.cliente_id;
+      const cliente = clienteId ? clienteMap[clienteId] : null;
+      return {
+        ...p,
+        factura_numero: factura?.numero_factura ?? "—",
+        cliente_nombre: cliente ? (cliente.empresa ?? cliente.nombre_contacto ?? "—") : "—",
+        usuario_email: p.usuario_id ? usuarioMap[p.usuario_id] ?? "—" : "—",
+      };
+    });
+
+    return NextResponse.json(successResponse(enriched));
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Error";
     return NextResponse.json(errorResponse(msg), { status: 500 });
@@ -70,7 +104,7 @@ export async function POST(request: NextRequest) {
 
     const { data: factura, error: errFactura } = await supabase
       .from("facturas")
-      .select("id, monto, saldo, estado")
+      .select("id, monto, saldo, estado, cliente_id")
       .eq("id", factura_id)
       .eq("empresa_id", auth.empresa_id)
       .single();
@@ -81,22 +115,32 @@ export async function POST(request: NextRequest) {
 
     const saldoActual = Number(factura.saldo);
     const montoNum = Number(monto);
+    if (montoNum > saldoActual) {
+      return NextResponse.json(
+        errorResponse("El monto del pago no puede superar el saldo pendiente de la factura"),
+        { status: 400 }
+      );
+    }
     const nuevoSaldo = Math.max(0, saldoActual - montoNum);
-    const nuevoEstado = nuevoSaldo <= 0 ? "Pagado" : "Pendiente";
+    const nuevoEstado = nuevoSaldo <= 0 ? "Pagado" : "Parcial";
 
     const metodosValidos = ["efectivo", "transferencia", "cheque", "tarjeta", "otro"];
     const metodo = metodosValidos.includes(metodo_pago) ? metodo_pago : "efectivo";
 
+    const insertData: Record<string, unknown> = {
+      empresa_id: auth.empresa_id,
+      factura_id: factura_id.trim(),
+      monto: montoNum,
+      fecha_pago: fecha_pago,
+      metodo_pago: metodo,
+      referencia: referencia?.trim() || null,
+      cliente_id: factura.cliente_id ?? null,
+      usuario_id: auth.user?.id ?? null,
+    };
+
     const { data, error } = await supabase
       .from("pagos")
-      .insert({
-        empresa_id: auth.empresa_id,
-        factura_id: factura_id.trim(),
-        monto: montoNum,
-        fecha_pago: fecha_pago,
-        metodo_pago: metodo,
-        referencia: referencia?.trim() || null,
-      })
+      .insert(insertData)
       .select()
       .single();
 
