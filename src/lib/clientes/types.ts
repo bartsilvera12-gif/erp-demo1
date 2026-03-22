@@ -63,9 +63,10 @@ export interface Cliente {
   deletion_reason?:      string | null;
 
   /** Baja operativa (estado inactivo + suscripciones canceladas) */
-  baja_operativa_at?:      string | null;   // ISO string
+  baja_operativa_at?:         string | null;   // ISO string
   baja_operativa_by_user_id?: string | null;
-  baja_operativa_motivo?:   string | null;
+  baja_operativa_by_nombre?:  string | null;   // Para trazabilidad
+  baja_operativa_motivo?:     string | null;
   baja_operativa_anulo_factura?: boolean | null;
 
   created_at:          string;          // ISO string

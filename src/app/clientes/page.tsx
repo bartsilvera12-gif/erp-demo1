@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { getClientes, clienteNombre } from "@/lib/clientes/storage";
 import type { Cliente } from "@/lib/clientes/types";
 import { TIPOS_SERVICIO_CLIENTE } from "@/lib/clientes/types";
@@ -46,9 +47,11 @@ function BadgeOrigen({ origen }: { origen: Cliente["origen"] }) {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ClientesPage() {
+  const searchParams = useSearchParams();
   const [clientes,    setClientes]    = useState<Cliente[]>([]);
   const [cargando,    setCargando]    = useState(true);
   const [busqueda,    setBusqueda]    = useState("");
+  const [bajaOk,      setBajaOk]      = useState(false);
   const [filtroEstado, setFiltroEstado] = useState<"" | "activo" | "inactivo">("");
   const [filtroOrigen, setFiltroOrigen] = useState<"" | "CRM" | "VENTA" | "MANUAL">("");
   const [filtroTipo,   setFiltroTipo]   = useState<"" | "empresa" | "persona">("");
@@ -60,6 +63,15 @@ export default function ClientesPage() {
       setCargando(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (searchParams?.get("baja_ok") === "1") {
+      setBajaOk(true);
+      window.history.replaceState({}, "", "/clientes");
+      const t = setTimeout(() => setBajaOk(false), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [searchParams]);
 
   const filtrados = clientes.filter((c) => {
     const nombre = clienteNombre(c).toLowerCase();
@@ -85,6 +97,14 @@ export default function ClientesPage() {
 
   return (
     <div className="space-y-6">
+
+      {/* Mensaje de éxito baja operativa */}
+      {bajaOk && (
+        <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-800">
+          <span className="text-xl">✓</span>
+          <p className="text-sm font-medium">Baja procesada correctamente</p>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-start justify-between">

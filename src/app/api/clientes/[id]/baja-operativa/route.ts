@@ -174,12 +174,13 @@ export async function POST(
     const { error: errCliente } = await supabase
       .from("clientes")
       .update({
-        estado:                  "inactivo",
-        baja_operativa_at:       now,
+        estado:                    "inactivo",
+        baja_operativa_at:         now,
         baja_operativa_by_user_id: auth.user.id,
-        baja_operativa_motivo:   motivo,
+        baja_operativa_by_nombre:  auth.nombre ?? null,
+        baja_operativa_motivo:     motivo,
         baja_operativa_anulo_factura: anularFacturaPendiente,
-        updated_at:              now,
+        updated_at:                now,
       })
       .eq("id", clienteId);
 

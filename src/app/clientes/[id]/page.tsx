@@ -367,7 +367,7 @@ export default function ClienteDetailPage() {
       return;
     }
     setModalBajaOperativa(false);
-    cargar();
+    router.push("/clientes?baja_ok=1");
   }
 
   async function handleEliminar() {
@@ -640,6 +640,31 @@ export default function ClienteDetailPage() {
           {/* ── INFORMACIÓN ─────────────────────────────────────────────── */}
           {activeTab === "informacion" && (
             <form onSubmit={handleGuardar} className="space-y-8 max-w-2xl">
+
+              {/* Trazabilidad de baja operativa */}
+              {cliente.baja_operativa_at && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-2">
+                  <p className="text-xs font-semibold text-amber-800 uppercase tracking-wider">Baja operativa registrada</p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                    <div>
+                      <span className="text-amber-700">Fecha de baja:</span>
+                      <span className="ml-2 font-medium text-amber-900">{formatFecha(cliente.baja_operativa_at)}</span>
+                    </div>
+                    <div>
+                      <span className="text-amber-700">Usuario:</span>
+                      <span className="ml-2 font-medium text-amber-900">{cliente.baja_operativa_by_nombre ?? cliente.baja_operativa_by_user_id ?? "—"}</span>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-amber-700">Motivo:</span>
+                      <span className="ml-2 font-medium text-amber-900">{cliente.baja_operativa_motivo ?? "—"}</span>
+                    </div>
+                    <div>
+                      <span className="text-amber-700">Factura pendiente anulada:</span>
+                      <span className="ml-2 font-medium text-amber-900">{cliente.baja_operativa_anulo_factura ? "Sí" : "No"}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Tipo */}
               <section className="space-y-4">

@@ -14,9 +14,10 @@ interface SupabaseRow {
   deleted_at:              string | null;
   deleted_by_user_id:      string | null;
   deletion_reason:         string | null;
-  baja_operativa_at:       string | null;
+  baja_operativa_at:         string | null;
   baja_operativa_by_user_id: string | null;
-  baja_operativa_motivo:   string | null;
+  baja_operativa_by_nombre:  string | null;
+  baja_operativa_motivo:     string | null;
   baja_operativa_anulo_factura: boolean | null;
   empresa:            string | null;
   nombre:             string | null;
@@ -93,9 +94,10 @@ function rowToCliente(row: SupabaseRow): Cliente {
     deleted_at:          row.deleted_at ?? undefined,
     deleted_by_user_id:  row.deleted_by_user_id ?? undefined,
     deletion_reason:     row.deletion_reason ?? undefined,
-    baja_operativa_at:   row.baja_operativa_at ?? undefined,
+    baja_operativa_at:         row.baja_operativa_at ?? undefined,
     baja_operativa_by_user_id: row.baja_operativa_by_user_id ?? undefined,
-    baja_operativa_motivo: row.baja_operativa_motivo ?? undefined,
+    baja_operativa_by_nombre:  row.baja_operativa_by_nombre ?? undefined,
+    baja_operativa_motivo:     row.baja_operativa_motivo ?? undefined,
     baja_operativa_anulo_factura: row.baja_operativa_anulo_factura ?? undefined,
     created_at:          row.created_at ?? now,
     updated_at:          row.updated_at ?? row.created_at ?? now,
