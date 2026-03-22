@@ -405,4 +405,127 @@ export async function generarTareasMarketing(opts: {
   return { generadas, omitidas, errores };
 }
 
+export interface RegenerarResultado {
+  eliminadas: number;
+  generadas: number;
+  errores: string[];
+}
+
+/** Regenera tareas automáticas de un cliente en un mes: elimina las auto existentes y genera nuevas según plantilla actual. */
+export async function regenerarTareasClienteMes(opts: {
+  empresa_id: string;
+  mes: string; // YYYY-MM
+  cliente_id: string;
+  /** Cliente Supabase (service role) para API */
+  supabaseClient?: SupabaseClient;
+}): Promise<RegenerarResultado> {
+  const client = opts.supabaseClient ?? supabase;
+
+  const [anoStr, mesStr] = opts.mes.split("-").map(Number);
+  const ano = Number(anoStr);
+  const mes = Number(mesStr);
+  const primerDia = `${opts.mes}-01`;
+  const ultimoDia = new Date(ano, mes, 0).getDate();
+  const ultimoDiaStr = `${opts.mes}-${String(ultimoDia).padStart(2, "0")}`;
+
+  // 1. Obtener suscripción activa del cliente
+  const { data: suscripciones } = await client
+    .from("suscripciones")
+    .select("id, plan_id")
+    .eq("empresa_id", opts.empresa_id)
+    .eq("cliente_id", opts.cliente_id)
+    .eq("estado", "activa")
+    .not("plan_id", "is", null)
+    .limit(1);
+
+  const susc = suscripciones?.[0];
+  if (!susc?.plan_id) {
+    return { eliminadas: 0, generadas: 0, errores: ["Cliente sin suscripción activa a plan de marketing"] };
+  }
+
+  // 2. Obtener plan con plantilla
+  const { data: plan } = await client
+    .from("planes")
+    .select("id, nombre, es_plan_marketing, plantilla_operativa")
+    .eq("id", susc.plan_id)
+    .single();
+
+  if (!plan?.es_plan_marketing) {
+    return { eliminadas: 0, generadas: 0, errores: ["Plan no es de marketing"] };
+  }
+
+  const plantilla = plan.plantilla_operativa as PlanMarketingPlantilla | undefined;
+  if (!plantilla?.items?.length) {
+    return { eliminadas: 0, generadas: 0, errores: ["Plan sin plantilla operativa"] };
+  }
+
+  // 3. Eliminar tareas automáticas del cliente en el mes
+  const { data: deleted, error: errDelete } = await client
+    .from("marketing_tasks")
+    .delete()
+    .eq("empresa_id", opts.empresa_id)
+    .eq("cliente_id", opts.cliente_id)
+    .eq("generada_automaticamente", true)
+    .gte("fecha_entrega", primerDia)
+    .lte("fecha_entrega", ultimoDiaStr)
+    .select("id");
+
+  if (errDelete) {
+    return { eliminadas: 0, generadas: 0, errores: [`Error al eliminar: ${errDelete.message}`] };
+  }
+
+  const eliminadas = deleted?.length ?? 0;
+
+  // 4. Nombre del cliente para títulos
+  const { data: cliente } = await client
+    .from("clientes")
+    .select("empresa, nombre_contacto")
+    .eq("id", opts.cliente_id)
+    .single();
+
+  const nombreCliente = (cliente?.empresa ?? cliente?.nombre_contacto ?? "Cliente").trim() || "Cliente";
+
+  // 5. Generar nuevas tareas según plantilla
+  const errores: string[] = [];
+  let generadas = 0;
+
+  for (const item of plantilla.items) {
+    if (!TIPOS_CONTENIDO.includes(item.tipo_contenido as (typeof TIPOS_CONTENIDO)[number])) continue;
+
+    let fechas: string[];
+    if (item.periodicidad === "semanal") {
+      fechas = fechasParaItemSemanal(ano, mes, item);
+    } else {
+      fechas = fechasParaItemMensual(ano, mes, item);
+    }
+
+    const tipoLabel = item.tipo_contenido.charAt(0).toUpperCase() + item.tipo_contenido.slice(1);
+
+    for (const fecha of fechas) {
+      const [, , dd] = fecha.split("-");
+      const titulo = `${tipoLabel} - ${nombreCliente} - ${dd}/${String(mes).padStart(2, "0")}`;
+
+      const { error } = await client.from("marketing_tasks").insert({
+        empresa_id: opts.empresa_id,
+        cliente_id: opts.cliente_id,
+        suscripcion_id: susc.id,
+        plan_id: plan.id,
+        generada_automaticamente: true,
+        titulo,
+        tipo_contenido: item.tipo_contenido,
+        fecha_entrega: fecha,
+        estado: "pendiente",
+      });
+
+      if (error) {
+        errores.push(`${fecha}-${item.tipo_contenido}: ${error.message}`);
+      } else {
+        generadas++;
+      }
+    }
+  }
+
+  return { eliminadas, generadas, errores };
+}
+
 export { DIAS_SEMANA };

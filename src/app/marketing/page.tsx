@@ -36,6 +36,9 @@ export default function MarketingOpsPage() {
   const [modalTarea, setModalTarea] = useState<MarketingTask | null>(null);
   const [marcandoCumplida, setMarcandoCumplida] = useState(false);
 
+  const [regenerarCliente, setRegenerarCliente] = useState<Cliente | null>(null);
+  const [regenerando, setRegenerando] = useState(false);
+
   const [syncPreview, setSyncPreview] = useState<{
     clientes_a_marcar_count: number;
     tareas_a_generar_count: number;
@@ -180,6 +183,28 @@ export default function MarketingOpsPage() {
     }
   }
 
+  async function handleRegenerarTareas(cli: Cliente) {
+    setRegenerando(true);
+    try {
+      const res = await fetch("/api/marketing/regenerar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mes, cliente_id: cli.id, confirmar: true }),
+      });
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setRegenerarCliente(null);
+        cargar();
+      } else {
+        alert(json.error ?? "Error al regenerar tareas");
+      }
+    } catch {
+      alert("Error al regenerar tareas");
+    } finally {
+      setRegenerando(false);
+    }
+  }
+
   if (cargando && tareas.length === 0) {
     return (
       <div className="space-y-6">
@@ -275,6 +300,37 @@ export default function MarketingOpsPage() {
         </div>
       )}
 
+      {/* Modal regenerar tareas */}
+      {regenerarCliente && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setRegenerarCliente(null)}>
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-800 mb-2">Regenerar tareas del mes</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Se eliminarán las <strong>tareas automáticas</strong> de <strong>{clienteNombre(regenerarCliente)}</strong> en <strong>{MESES[mesNum - 1]} {ano}</strong> y se generarán nuevas según la plantilla actual del plan.
+            </p>
+            <p className="text-xs text-amber-600 mb-4">Las tareas manuales no se modificarán.</p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => handleRegenerarTareas(regenerarCliente)}
+                disabled={regenerando}
+                className="flex-1 bg-[#0EA5E9] hover:bg-[#0284C7] text-white px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+              >
+                {regenerando ? "Regenerando…" : "Confirmar"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setRegenerarCliente(null)}
+                disabled={regenerando}
+                className="border border-slate-200 px-4 py-2 rounded-lg text-sm hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal cumplimiento */}
       {modalTarea && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setModalTarea(null)}>
@@ -352,6 +408,15 @@ export default function MarketingOpsPage() {
 
                 {expandido && (
                   <div className="border-t border-slate-100 p-4 bg-slate-50/50">
+                    <div className="flex items-center justify-between gap-4 mb-3">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setRegenerarCliente(c); }}
+                        className="text-xs font-medium text-[#0EA5E9] hover:underline"
+                      >
+                        Regenerar tareas del mes
+                      </button>
+                    </div>
                     <div className="grid grid-cols-7 min-w-[600px] gap-1" style={{ gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}>
                       {["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"].map((d) => (
                         <div key={d} className="text-center text-xs font-semibold text-slate-500 py-1">{d}</div>
