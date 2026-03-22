@@ -14,6 +14,10 @@ interface SupabaseRow {
   deleted_at:              string | null;
   deleted_by_user_id:      string | null;
   deletion_reason:         string | null;
+  baja_operativa_at:       string | null;
+  baja_operativa_by_user_id: string | null;
+  baja_operativa_motivo:   string | null;
+  baja_operativa_anulo_factura: boolean | null;
   empresa:            string | null;
   nombre:             string | null;
   nombre_contacto:    string | null;
@@ -29,8 +33,6 @@ interface SupabaseRow {
   sitio_web:          string | null;
   instagram:          string | null;
   linkedin:           string | null;
-  categoria_cliente:  string | null;
-  industria:          string | null;
   valor_cliente:      number | null;
   condicion_pago:     string | null;
   moneda_preferida:   string | null;
@@ -77,8 +79,6 @@ function rowToCliente(row: SupabaseRow): Cliente {
     sitio_web:           row.sitio_web ?? undefined,
     instagram:           row.instagram ?? undefined,
     linkedin:            row.linkedin ?? undefined,
-    categoria_cliente:   row.categoria_cliente ?? undefined,
-    industria:           row.industria ?? undefined,
     valor_cliente:       row.valor_cliente ?? undefined,
     condicion_pago:      row.condicion_pago ?? undefined,
     moneda_preferida:    (row.moneda_preferida === "USD" ? "USD" : "GS") as "GS" | "USD",
@@ -93,6 +93,10 @@ function rowToCliente(row: SupabaseRow): Cliente {
     deleted_at:          row.deleted_at ?? undefined,
     deleted_by_user_id:  row.deleted_by_user_id ?? undefined,
     deletion_reason:     row.deletion_reason ?? undefined,
+    baja_operativa_at:   row.baja_operativa_at ?? undefined,
+    baja_operativa_by_user_id: row.baja_operativa_by_user_id ?? undefined,
+    baja_operativa_motivo: row.baja_operativa_motivo ?? undefined,
+    baja_operativa_anulo_factura: row.baja_operativa_anulo_factura ?? undefined,
     created_at:          row.created_at ?? now,
     updated_at:          row.updated_at ?? row.created_at ?? now,
   };
@@ -174,8 +178,6 @@ export async function saveCliente(datos: NuevoClienteData): Promise<Cliente | nu
     sitio_web:          datos.sitio_web ?? null,
     instagram:          datos.instagram ?? null,
     linkedin:           datos.linkedin ?? null,
-    categoria_cliente:   datos.categoria_cliente ?? null,
-    industria:          datos.industria ?? null,
     valor_cliente:      datos.valor_cliente ?? null,
     condicion_pago:     datos.condicion_pago ?? null,
     moneda_preferida:   datos.moneda_preferida ?? "GS",
@@ -222,8 +224,6 @@ export async function updateCliente(
   if (datos.sitio_web !== undefined) patch.sitio_web = datos.sitio_web ?? null;
   if (datos.instagram !== undefined) patch.instagram = datos.instagram ?? null;
   if (datos.linkedin !== undefined) patch.linkedin = datos.linkedin ?? null;
-  if (datos.categoria_cliente !== undefined) patch.categoria_cliente = datos.categoria_cliente ?? null;
-  if (datos.industria !== undefined) patch.industria = datos.industria ?? null;
   if (datos.valor_cliente !== undefined) patch.valor_cliente = datos.valor_cliente ?? null;
   if (datos.condicion_pago !== undefined) patch.condicion_pago = datos.condicion_pago ?? null;
   if (datos.moneda_preferida !== undefined) patch.moneda_preferida = datos.moneda_preferida ?? null;

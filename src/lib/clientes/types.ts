@@ -37,8 +37,6 @@ export interface Cliente {
   instagram?:          string;
   linkedin?:           string;
 
-  categoria_cliente?:  string;          // MINORISTA / MAYORISTA / CORPORATIVO…
-  industria?:          string;
   valor_cliente?:      number;          // valor estimado anual en GS
 
   condicion_pago?:     string;          // CONTADO / 30 DÍAS / 60 DÍAS…
@@ -63,6 +61,12 @@ export interface Cliente {
   deleted_at?:           string | null;   // ISO string
   deleted_by_user_id?:   string | null;
   deletion_reason?:      string | null;
+
+  /** Baja operativa (estado inactivo + suscripciones canceladas) */
+  baja_operativa_at?:      string | null;   // ISO string
+  baja_operativa_by_user_id?: string | null;
+  baja_operativa_motivo?:   string | null;
+  baja_operativa_anulo_factura?: boolean | null;
 
   created_at:          string;          // ISO string
   updated_at:          string;          // ISO string

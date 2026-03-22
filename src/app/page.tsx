@@ -638,6 +638,7 @@ function DashComercial({
 
 function DashFinanciero({
   facturas, pagos, clientes, ventas, compras, gastos, periodo, config,
+  clientesBajaMes = 0, montoPerdidoBajas = 0,
 }: {
   facturas:  FacturaRaw[];
   pagos:     PagoRaw[];
@@ -647,6 +648,8 @@ function DashFinanciero({
   gastos:    GastoRaw[];
   periodo:   Periodo;
   config:    ConfigGlobal;
+  clientesBajaMes?: number;
+  montoPerdidoBajas?: number;
 }) {
   const { desde, hasta } = useMemo(() => getRango(periodo), [periodo]);
   const hoy = hoyStr();
@@ -677,8 +680,9 @@ function DashFinanciero({
     return { ingresos, gastos: gastosTotal, resultado: ingresos - gastosTotal };
   }, [pagos, compras, gastos]);
 
-  // KPIs
-  const facturasPeriodo = facturas.filter(f => enRango(f.fecha, desde, hasta));
+  // KPIs (excluir facturas anuladas de facturado y saldo)
+  const facturasValidas = facturas.filter(f => f.estado !== "Anulado");
+  const facturasPeriodo = facturasValidas.filter(f => enRango(f.fecha, desde, hasta));
   const sumMonto = <T extends { monto?: unknown }>(arr: T[]) =>
     arr.reduce((acc, x) => { const v = Number(x.monto); return acc + (Number.isFinite(v) ? v : 0); }, 0);
   const sumSaldo = (arr: { saldo?: unknown }[]) =>
@@ -686,28 +690,28 @@ function DashFinanciero({
   const facturado       = sumMonto(facturasPeriodo);
   const pagosPeriodo    = pagos.filter(p => enRango(p.fecha_pago, desde, hasta));
   const cobrado         = sumMonto(pagosPeriodo);
-  const saldoPendiente  = sumSaldo(facturas.filter(f => (Number(f.saldo) || 0) > 0));
-  const cntVencidas     = facturas.filter(f => estadoEfectivo(f, hoy) === "Vencido").length;
+  const saldoPendiente  = sumSaldo(facturasValidas.filter(f => (Number(f.saldo) || 0) > 0));
+  const cntVencidas     = facturasValidas.filter(f => estadoEfectivo(f, hoy) === "Vencido").length;
 
-  // Facturación mensual (últimos 12 meses)
+  // Facturación mensual (últimos 12 meses, excluir anuladas)
   const mensual = useMemo(() => {
     const result: { label: string; value: number }[] = [];
     const now = new Date();
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const y = d.getFullYear(), m = d.getMonth() + 1;
-      const value = facturas
+      const value = facturasValidas
         .filter(f => { const fd = new Date(f.fecha); return fd.getFullYear() === y && fd.getMonth() + 1 === m; })
         .reduce((s, f) => s + f.monto, 0);
       result.push({ label: `${String(m).padStart(2,"0")}/${String(y).slice(2)}`, value });
     }
     return result;
-  }, [facturas]);
+  }, [facturasValidas]);
 
-  // Distribución facturas (todo el tiempo)
-  const pagadas    = facturas.filter(f => estadoEfectivo(f, hoy) === "Pagado").length;
-  const pendientes = facturas.filter(f => estadoEfectivo(f, hoy) === "Pendiente").length;
-  const vencidas   = facturas.filter(f => estadoEfectivo(f, hoy) === "Vencido").length;
+  // Distribución facturas (todo el tiempo, excluir anuladas)
+  const pagadas    = facturasValidas.filter(f => estadoEfectivo(f, hoy) === "Pagado").length;
+  const pendientes = facturasValidas.filter(f => estadoEfectivo(f, hoy) === "Pendiente").length;
+  const vencidas   = facturasValidas.filter(f => estadoEfectivo(f, hoy) === "Vencido").length;
 
   // Mapa de clientes para join
   const clienteMap = useMemo(() =>
@@ -715,13 +719,13 @@ function DashFinanciero({
     [clientes]
   );
 
-  // Facturas críticas (mayor saldo vencido)
+  // Facturas críticas (mayor saldo vencido, excluir anuladas)
   const criticas = useMemo(() =>
-    facturas
+    facturasValidas
       .filter(f => estadoEfectivo(f, hoy) === "Vencido")
       .sort((a, b) => b.saldo - a.saldo)
       .slice(0, 10),
-    [facturas, hoy]
+    [facturasValidas, hoy]
   );
 
   return (
@@ -740,7 +744,7 @@ function DashFinanciero({
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-4">
         <KpiCard icon="🧾" label="Facturado" value={`Gs. ${formatGsM(facturado)}`} color="text-[#0EA5E9]"
           sub={`${facturasPeriodo.length} facturas`} variation={15} />
         <KpiCard icon="💵" label="Cobrado" value={`Gs. ${formatGsM(cobrado)}`} color="text-[#0EA5E9]" variation={8} />
@@ -749,6 +753,10 @@ function DashFinanciero({
         <KpiCard icon="🚨" label="Facturas vencidas" value={String(cntVencidas)}
           color={cntVencidas > 0 ? "text-red-600" : "text-[#0EA5E9]"}
           variation={cntVencidas > 0 ? -3 : undefined} />
+        <KpiCard icon="📉" label="Bajas del mes" value={String(clientesBajaMes)}
+          sub="Clientes dados de baja" color={clientesBajaMes > 0 ? "text-amber-600" : "text-[#0EA5E9]"} />
+        <KpiCard icon="💰" label="Monto perdido (bajas)" value={`Gs. ${formatGsM(montoPerdidoBajas)}`}
+          sub="Por suscripciones canceladas" color={montoPerdidoBajas > 0 ? "text-amber-600" : "text-[#0EA5E9]"} />
       </div>
 
       {/* Metas financieras */}
@@ -756,7 +764,7 @@ function DashFinanciero({
         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Progreso de metas</h3>
         <div className="grid grid-cols-2 gap-6">
           <ProgressBar label="Facturación mensual"
-            value={facturas
+            value={facturasValidas
               .filter(f => { const d = new Date(f.fecha); const n = new Date(); return d.getMonth() === n.getMonth() && d.getFullYear() === n.getFullYear(); })
               .reduce((s, f) => s + f.monto, 0)}
             meta={config.meta_facturacion_mensual} format="gs" />
@@ -1222,6 +1230,8 @@ export default function DashboardPage() {
   const [ventas,         setVentas]         = useState<VentaRaw[]>([]);
   const [compras,        setCompras]        = useState<CompraRaw[]>([]);
   const [gastos,         setGastos]         = useState<GastoRaw[]>([]);
+  const [clientesBajaMes, setClientesBajaMes] = useState(0);
+  const [montoPerdidoBajas, setMontoPerdidoBajas] = useState(0);
 
   // Sincronizar tab con URL al cargar (popstate / refresh)
   useEffect(() => {
@@ -1258,6 +1268,8 @@ export default function DashboardPage() {
         setVentas(data.ventas);
         setCompras(data.compras);
         setGastos(data.gastos);
+        setClientesBajaMes(data.clientes_baja_mes ?? 0);
+        setMontoPerdidoBajas(data.monto_perdido_bajas_mes ?? 0);
       })
       .catch(() => {
         setProspectos([]);
@@ -1269,6 +1281,8 @@ export default function DashboardPage() {
         setVentas([]);
         setCompras([]);
         setGastos([]);
+        setClientesBajaMes(0);
+        setMontoPerdidoBajas(0);
       });
   }, []);
 
@@ -1392,6 +1406,8 @@ export default function DashboardPage() {
           gastos={gastos}
           periodo={periodo}
           config={config}
+          clientesBajaMes={clientesBajaMes}
+          montoPerdidoBajas={montoPerdidoBajas}
         />
       )}
 

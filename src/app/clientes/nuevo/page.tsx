@@ -55,8 +55,6 @@ function NuevoClienteForm() {
     sitio_web:           "",
     instagram:           "",
     linkedin:            "",
-    categoria_cliente:   "",
-    industria:           "",
     valor_cliente:       "",
     condicion_pago:      "CONTADO",
     moneda_preferida:    "GS" as "GS" | "USD",
@@ -109,7 +107,7 @@ function NuevoClienteForm() {
     return () => { cancelled = true; };
   }, [fromCrmId]);
 
-  const upper = ["empresa", "nombre_contacto", "ciudad", "pais", "categoria_cliente", "industria", "vendedor_asignado", "condicion_pago", "direccion"];
+  const upper = ["empresa", "nombre_contacto", "ciudad", "pais", "vendedor_asignado", "condicion_pago", "direccion"];
   const lower = ["email", "email_secundario"];
 
   function handleChange(
@@ -131,7 +129,7 @@ function NuevoClienteForm() {
     if (!form.nombre_contacto.trim())                              return setError("El nombre de contacto es obligatorio.");
     if (form.tipo_cliente === "empresa" && !form.empresa.trim())   return setError("La razón social es obligatoria para empresas.");
 
-    if (form.condicion_pago === "MENSUAL") {
+    if (form.condicion_pago === "MENSUAL" && form.estado === "activo") {
       const dur = parseInt(formSusc.duracion_meses, 10) || 0;
       const diaFac = parseInt(formSusc.dia_facturacion, 10) || 0;
       const diaVenc = parseInt(formSusc.dia_vencimiento, 10) || 0;
@@ -173,8 +171,8 @@ function NuevoClienteForm() {
       return setError("Error al guardar. Revisa la consola.");
     }
 
-    // Crear suscripción automática si condicion_pago = MENSUAL
-    if (form.condicion_pago === "MENSUAL") {
+    // Crear suscripción automática si condicion_pago = MENSUAL y estado activo
+    if (form.condicion_pago === "MENSUAL" && form.estado === "activo") {
       const plan = planes.find((p) => p.id === formSusc.plan_id);
       await apiCreateSuscripcion({
         cliente_id: nuevo.id,
@@ -455,31 +453,6 @@ function NuevoClienteForm() {
           {/* ── Datos comerciales ────────────────────────────────────────── */}
           <section className="space-y-4">
             <SectionTitle>Datos comerciales</SectionTitle>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className={labelClass}>Categoría</label>
-                <input
-                  type="text"
-                  name="categoria_cliente"
-                  value={form.categoria_cliente}
-                  onChange={handleChange}
-                  placeholder="MAYORISTA / MINORISTA / CORPORATIVO"
-                  className={`${inputClass} uppercase`}
-                />
-              </div>
-              <div>
-                <label className={labelClass}>Industria</label>
-                <input
-                  type="text"
-                  name="industria"
-                  value={form.industria}
-                  onChange={handleChange}
-                  placeholder="DISTRIBUCIÓN / SALUD..."
-                  className={`${inputClass} uppercase`}
-                />
-              </div>
-            </div>
 
             <div className="grid grid-cols-3 gap-4">
               <div>

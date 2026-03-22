@@ -10,7 +10,7 @@ import {
   toggleEstado,
   updateCliente,
 } from "@/lib/clientes/storage";
-import { apiDeleteCliente } from "@/lib/api/client";
+import { apiDeleteCliente, apiGetBajaOperativaPreview, apiBajaOperativaCliente } from "@/lib/api/client";
 import { getFacturas, getSuscripciones } from "@/lib/facturacion/storage";
 import { apiCreateFactura, apiCreatePago, apiCreateSuscripcion } from "@/lib/api/client";
 import { getConfig, saveConfig } from "@/lib/config/storage";
@@ -96,6 +96,12 @@ export default function ClienteDetailPage() {
   const [deletionReason, setDeletionReason] = useState("");
   const [eliminando, setEliminando] = useState(false);
   const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
+  const [modalBajaOperativa, setModalBajaOperativa] = useState(false);
+  const [bajaMotivo, setBajaMotivo] = useState("");
+  const [bajaAnularFactura, setBajaAnularFactura] = useState(false);
+  const [bajaPreview, setBajaPreview] = useState<{ factura_pendiente_mes: { id: string; numero_factura: string; monto: number } | null } | null>(null);
+  const [bajaProcesando, setBajaProcesando] = useState(false);
+  const [errorBaja, setErrorBaja] = useState<string | null>(null);
 
   // Estados del formulario de información
   const [form, setForm] = useState({
@@ -114,8 +120,6 @@ export default function ClienteDetailPage() {
     sitio_web:           "",
     instagram:           "",
     linkedin:            "",
-    categoria_cliente:   "",
-    industria:           "",
     valor_cliente:       "",
     condicion_pago:      "",
     moneda_preferida:      "GS" as "GS" | "USD",
@@ -178,8 +182,6 @@ export default function ClienteDetailPage() {
       sitio_web:           c.sitio_web           ?? "",
       instagram:           c.instagram           ?? "",
       linkedin:            c.linkedin            ?? "",
-      categoria_cliente:   c.categoria_cliente   ?? "",
-      industria:           c.industria           ?? "",
       valor_cliente:       c.valor_cliente != null ? String(c.valor_cliente) : "",
       condicion_pago:       c.condicion_pago      ?? "",
       moneda_preferida:     c.moneda_preferida    ?? "GS",
@@ -219,7 +221,7 @@ export default function ClienteDetailPage() {
     }
   }, [form.condicion_pago, id]);
 
-  const upper = ["empresa", "nombre_contacto", "ciudad", "pais", "categoria_cliente", "industria", "vendedor_asignado", "condicion_pago", "direccion"];
+  const upper = ["empresa", "nombre_contacto", "ciudad", "pais", "vendedor_asignado", "condicion_pago", "direccion"];
   const lower = ["email", "email_secundario"];
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
@@ -238,7 +240,7 @@ export default function ClienteDetailPage() {
     if (!form.nombre_contacto.trim())                             return setFormError("El contacto es obligatorio.");
     if (form.tipo_cliente === "empresa" && !form.empresa.trim())  return setFormError("La razón social es obligatoria para empresas.");
 
-    if (form.condicion_pago === "MENSUAL") {
+    if (form.condicion_pago === "MENSUAL" && form.estado === "activo") {
       const dur = parseInt(formSuscEdit.duracion_meses, 10) || 0;
       const diaFac = parseInt(formSuscEdit.dia_facturacion, 10) || 0;
       const diaVenc = parseInt(formSuscEdit.dia_vencimiento, 10) || 0;
@@ -272,8 +274,6 @@ export default function ClienteDetailPage() {
       sitio_web:           form.sitio_web.trim()           || undefined,
       instagram:           form.instagram.trim()           || undefined,
       linkedin:            form.linkedin.trim()            || undefined,
-      categoria_cliente:   form.categoria_cliente.trim().toUpperCase() || undefined,
-      industria:           form.industria.trim().toUpperCase()         || undefined,
       valor_cliente:       parseFloat(form.valor_cliente) || undefined,
       condicion_pago:      form.condicion_pago.trim().toUpperCase()    || undefined,
       moneda_preferida:    form.moneda_preferida,
@@ -318,8 +318,8 @@ export default function ClienteDetailPage() {
       }
     }
 
-    // Crear suscripción si condicion_pago = MENSUAL y no existe
-    if (form.condicion_pago === "MENSUAL" && suscripciones.length === 0) {
+    // Crear suscripción si condicion_pago = MENSUAL, estado activo y no existe
+    if (form.condicion_pago === "MENSUAL" && form.estado === "activo" && suscripciones.length === 0) {
       const plan = planes.find((p) => p.id === formSuscEdit.plan_id);
       await apiCreateSuscripcion({
         cliente_id: id,
@@ -341,6 +341,32 @@ export default function ClienteDetailPage() {
     if (!cliente) return;
     const nuevo = cliente.estado === "activo" ? "inactivo" : "activo";
     await toggleEstado(id, nuevo);
+    cargar();
+  }
+
+  async function abrirModalBajaOperativa() {
+    setModalBajaOperativa(true);
+    setBajaMotivo("");
+    setBajaAnularFactura(false);
+    setErrorBaja(null);
+    const preview = await apiGetBajaOperativaPreview(id);
+    setBajaPreview(preview ? { factura_pendiente_mes: preview.factura_pendiente_mes } : null);
+  }
+
+  async function handleBajaOperativa() {
+    if (!bajaMotivo.trim()) {
+      setErrorBaja("El motivo es obligatorio");
+      return;
+    }
+    setBajaProcesando(true);
+    setErrorBaja(null);
+    const res = await apiBajaOperativaCliente(id, bajaMotivo.trim(), bajaAnularFactura);
+    setBajaProcesando(false);
+    if (!res.ok) {
+      setErrorBaja(res.error ?? "Error al dar de baja");
+      return;
+    }
+    setModalBajaOperativa(false);
     cargar();
   }
 
@@ -432,12 +458,30 @@ export default function ClienteDetailPage() {
             </div>
             {/* Acciones del header */}
             <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={handleToggleEstado}
-                className="text-xs font-medium border border-white/20 text-white/80 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors"
-              >
-                {cliente.estado === "activo" ? "Desactivar" : "Activar"}
-              </button>
+              {cliente.estado === "activo" ? (
+                esAdmin ? (
+                  <button
+                    onClick={abrirModalBajaOperativa}
+                    className="text-xs font-medium border border-amber-400/60 text-amber-200 hover:bg-amber-500/20 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Dar de baja cliente
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleToggleEstado}
+                    className="text-xs font-medium border border-white/20 text-white/80 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    Desactivar
+                  </button>
+                )
+              ) : (
+                <button
+                  onClick={handleToggleEstado}
+                  className="text-xs font-medium border border-white/20 text-white/80 hover:bg-white/10 px-3 py-1.5 rounded-lg transition-colors"
+                >
+                  Reactivar
+                </button>
+              )}
               {esAdmin && (
                 <button
                   onClick={() => setConfirmarEliminar(true)}
@@ -470,6 +514,66 @@ export default function ClienteDetailPage() {
           ))}
         </div>
       </div>
+
+      {/* Modal Dar de baja operativa */}
+      {modalBajaOperativa && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+          <p className="text-sm text-amber-800 font-medium">
+            Dar de baja operativa: el cliente pasará a inactivo, se cancelarán suscripciones activas y no se generarán facturas futuras.
+          </p>
+          {bajaPreview?.factura_pendiente_mes && (
+            <div className="bg-amber-100/50 border border-amber-200 rounded-lg p-3">
+              <p className="text-sm text-amber-900 font-medium mb-2">
+                Este cliente tiene factura pendiente del período actual ({bajaPreview.factura_pendiente_mes.numero_factura} — Gs. {bajaPreview.factura_pendiente_mes.monto?.toLocaleString("es-PY")}).
+              </p>
+              <p className="text-xs text-amber-800 mb-2">¿Deseas anularla también al dar de baja al cliente?</p>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setBajaAnularFactura(true)}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-medium ${bajaAnularFactura ? "bg-amber-600 text-white" : "bg-white border border-amber-300 text-amber-800 hover:bg-amber-100"}`}
+                >
+                  Sí, anular factura pendiente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBajaAnularFactura(false)}
+                  className={`text-xs px-3 py-1.5 rounded-lg font-medium ${!bajaAnularFactura ? "bg-amber-600 text-white" : "bg-white border border-amber-300 text-amber-800 hover:bg-amber-100"}`}
+                >
+                  No, conservar factura pendiente
+                </button>
+              </div>
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-amber-800 mb-1">Motivo obligatorio</label>
+            <textarea
+              value={bajaMotivo}
+              onChange={(e) => { setBajaMotivo(e.target.value); setErrorBaja(null); }}
+              placeholder="Ej: Fin del contrato, solicitud del cliente..."
+              className="w-full border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-amber-400 min-h-[60px]"
+              rows={2}
+            />
+            {errorBaja && <p className="text-xs text-red-600 mt-1">{errorBaja}</p>}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleBajaOperativa}
+              disabled={bajaProcesando}
+              className="bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-700 disabled:opacity-50"
+            >
+              {bajaProcesando ? "Procesando…" : "Confirmar baja"}
+            </button>
+            <button
+              onClick={() => setModalBajaOperativa(false)}
+              disabled={bajaProcesando}
+              className="border border-amber-200 text-amber-700 px-3 py-1.5 rounded-lg text-xs hover:bg-amber-100 disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Confirmación de eliminación (baja administrativa) */}
       {confirmarEliminar && (
@@ -662,17 +766,6 @@ export default function ClienteDetailPage() {
               {/* Comercial */}
               <section className="space-y-4">
                 <SectionTitle>Datos comerciales</SectionTitle>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={labelClass}>Categoría</label>
-                    <input type="text" name="categoria_cliente" value={form.categoria_cliente} onChange={handleChange} className={`${inputClass} uppercase`} />
-                  </div>
-                  <div>
-                    <label className={labelClass}>Industria</label>
-                    <input type="text" name="industria" value={form.industria} onChange={handleChange} className={`${inputClass} uppercase`} />
-                  </div>
-                </div>
 
                 <div className="grid grid-cols-3 gap-4">
                   <div>

@@ -36,6 +36,36 @@ export async function apiCreateCliente(data: {
   return result.success ? result.data : null;
 }
 
+/** Obtiene datos previos para dar de baja (suscripciones, factura pendiente). */
+export async function apiGetBajaOperativaPreview(clienteId: string): Promise<{
+  suscripciones_activas: number;
+  factura_pendiente_mes: { id: string; numero_factura: string; monto: number } | null;
+  suscripciones: { id: string; precio: number; moneda: string }[];
+} | null> {
+  const res = await fetch(`/api/clientes/${clienteId}/baja-operativa`);
+  const json = await res.json();
+  if (!res.ok) return null;
+  return json?.data ?? null;
+}
+
+/** Dar de baja operativa al cliente. Solo admin. Motivo obligatorio. */
+export async function apiBajaOperativaCliente(
+  clienteId: string,
+  motivo: string,
+  anularFacturaPendiente: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/clientes/${clienteId}/baja-operativa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ motivo: motivo.trim(), anular_factura_pendiente: anularFacturaPendiente }),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    return { ok: false, error: json?.error ?? `Error ${res.status}` };
+  }
+  return { ok: true };
+}
+
 /** Eliminación lógica del cliente. Solo admin. Requiere motivo. */
 export async function apiDeleteCliente(id: string, deletionReason: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/clientes/${id}`, {

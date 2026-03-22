@@ -117,6 +117,10 @@ export interface DashboardData {
   ventas: VentaRaw[];
   compras: CompraRaw[];
   gastos: GastoRaw[];
+  /** Clientes dados de baja operativa en el mes actual */
+  clientes_baja_mes: number;
+  /** Monto mensual perdido por bajas del mes (suma de precios de suscripciones canceladas) */
+  monto_perdido_bajas_mes: number;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -198,11 +202,19 @@ export async function getDashboardData(): Promise<DashboardData> {
   let ventas: VentaRaw[] = [];
   let compras: CompraRaw[] = [];
   let gastos: GastoRaw[] = [];
+  let clientesBajaMes = 0;
+  let montoPerdidoBajasMes = 0;
 
   try {
-    const [clientesQ, facturasQ, pagosQ, tipificacionesQ, productosQ, ventasQ, ventasItemsQ, comprasQ, gastosQ] =
+    const now = new Date();
+    const anio = now.getFullYear();
+    const mes = now.getMonth() + 1;
+    const inicioMes = `${anio}-${String(mes).padStart(2, "0")}-01`;
+    const finMes = `${anio}-${String(mes).padStart(2, "0")}-31`;
+
+    const [clientesQ, facturasQ, pagosQ, tipificacionesQ, productosQ, ventasQ, ventasItemsQ, comprasQ, gastosQ, bajasQ, suscBajasQ] =
       await Promise.all([
-        supabase.from("clientes").select("*"),
+        supabase.from("clientes").select("*").is("deleted_at", null),
         supabase.from("facturas").select("*"),
         supabase.from("pagos").select("id, factura_id, monto, fecha_pago"),
         supabase.from("tipificaciones").select("*"),
@@ -211,7 +223,16 @@ export async function getDashboardData(): Promise<DashboardData> {
         supabase.from("ventas_items").select("*"),
         supabase.from("compras").select("*"),
         supabase.from("gastos").select("id, monto, fecha"),
+        supabase.from("clientes").select("id").not("baja_operativa_at", "is", null).gte("baja_operativa_at", inicioMes).lte("baja_operativa_at", finMes + "T23:59:59.999Z"),
+        supabase.from("suscripciones").select("cliente_id, precio").eq("estado", "cancelada"),
       ]);
+
+    const clientesBajaIds = new Set((bajasQ.data ?? []).map((c: { id: string }) => c.id));
+    const suscBajas = (suscBajasQ.data ?? []) as { cliente_id: string; precio: number }[];
+    clientesBajaMes = clientesBajaIds.size;
+    montoPerdidoBajasMes = suscBajas
+      .filter((s) => clientesBajaIds.has(s.cliente_id))
+      .reduce((sum, s) => sum + Number(s.precio ?? 0), 0);
 
     if (clientesQ.error) throw new Error(clientesQ.error.message);
     if (facturasQ.error) throw new Error(facturasQ.error.message);
@@ -337,5 +358,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     ventas,
     compras,
     gastos,
+    clientes_baja_mes: clientesBajaMes,
+    monto_perdido_bajas_mes: montoPerdidoBajasMes,
   };
 }
