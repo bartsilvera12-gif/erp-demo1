@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
+import type { WebhookProvisionEnv } from "@/lib/chat/channel-provision";
 import { verifyMetaSignature } from "@/lib/chat/meta-signature";
 import { processWhatsAppWebhookBody } from "@/lib/chat/whatsapp-webhook-service";
 
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
 /**
  * POST — eventos entrantes (mensajes, estados, etc.)
  * No valida empresa_modulos: el canal (chat_channels) define la empresa; los mensajes se guardan siempre.
+ * Aprovisionamiento automático (demo): WHATSAPP_DEFAULT_EMPRESA_ID + WHATSAPP_PHONE_NUMBER_ID (debe coincidir con el webhook).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -50,7 +52,11 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = getSupabaseAdmin();
-    const result = await processWhatsAppWebhookBody(supabase, body);
+    const provisionEnv: WebhookProvisionEnv = {
+      defaultEmpresaId: process.env.WHATSAPP_DEFAULT_EMPRESA_ID?.trim(),
+      expectedPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID?.trim(),
+    };
+    const result = await processWhatsAppWebhookBody(supabase, body, provisionEnv);
 
     return NextResponse.json({
       ok: result.ok,

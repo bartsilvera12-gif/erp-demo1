@@ -71,13 +71,21 @@ export async function POST(request: NextRequest) {
 
     const { data: channel } = await supabase
       .from("chat_channels")
-      .select("meta_phone_number_id")
+      .select("meta_phone_number_id, activo")
       .eq("id", conv.channel_id as string)
       .maybeSingle();
 
+    if (channel && (channel as { activo?: boolean }).activo === false) {
+      return NextResponse.json(
+        { ok: false, error: "El canal WhatsApp está desactivado. Activalo en Configuración." },
+        { status: 403 }
+      );
+    }
+
     const toDigits = contact?.phone_number ? normalizeWaPhone(contact.phone_number) : "";
     const phoneNumberId =
-      channel?.meta_phone_number_id ?? process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+      (channel as { meta_phone_number_id?: string } | null)?.meta_phone_number_id ??
+      process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
 
     if (!toDigits || !phoneNumberId) {
       return NextResponse.json(

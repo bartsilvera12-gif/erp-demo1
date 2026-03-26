@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  fetchChatChannels,
   fetchChatConversations,
   markConversationRead,
   type InboxConversation,
@@ -39,6 +40,7 @@ export default function ConversacionesPage() {
   const [loadingMsg, setLoadingMsg] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasActiveChannel, setHasActiveChannel] = useState<boolean | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const loadConversations = useCallback(async () => {
@@ -76,6 +78,20 @@ export default function ConversacionesPage() {
   }, [loadConversations]);
 
   useEffect(() => {
+    fetchChatChannels()
+      .then((ch) => setHasActiveChannel(ch.some((c) => c.activo)))
+      .catch(() => setHasActiveChannel(null));
+  }, []);
+
+  useEffect(() => {
+    if (!loadingList) {
+      fetchChatChannels()
+        .then((ch) => setHasActiveChannel(ch.some((c) => c.activo)))
+        .catch(() => {});
+    }
+  }, [loadingList]);
+
+  useEffect(() => {
     const t = setInterval(() => {
       loadConversations();
       if (selectedId) loadMessages(selectedId);
@@ -109,6 +125,7 @@ export default function ConversacionesPage() {
       const res = await fetch("/api/chat/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
         body: JSON.stringify({ conversation_id: selectedId, message: input.trim() }),
       });
       const json = await res.json().catch(() => ({}));
@@ -129,10 +146,27 @@ export default function ConversacionesPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] min-h-[480px] gap-4">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800">Conversaciones</h1>
-        <p className="text-sm text-slate-500">WhatsApp · bandeja de entrada</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Conversaciones</h1>
+          <p className="text-sm text-slate-500">WhatsApp · bandeja de entrada</p>
+        </div>
+        <Link
+          href="/dashboard/conversaciones/configuracion"
+          className="shrink-0 text-sm font-medium text-[#0EA5E9] hover:underline px-3 py-2 rounded-lg border border-sky-200 bg-sky-50"
+        >
+          Configurar canal WhatsApp
+        </Link>
       </div>
+
+      {hasActiveChannel === false && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-sm rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+          <span>No hay un canal WhatsApp activo para tu empresa. Los mensajes no se registrarán hasta configurarlo.</span>
+          <Link href="/dashboard/conversaciones/configuracion" className="font-semibold text-amber-800 hover:underline">
+            Ir a configuración →
+          </Link>
+        </div>
+      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-2">
@@ -150,7 +184,15 @@ export default function ConversacionesPage() {
             {loadingList ? (
               <div className="p-6 text-sm text-slate-400 text-center animate-pulse">Cargando…</div>
             ) : conversations.length === 0 ? (
-              <div className="p-6 text-sm text-slate-500 text-center">No hay conversaciones aún</div>
+              <div className="p-6 text-sm text-slate-500 text-center space-y-2">
+                <p>No hay conversaciones aún</p>
+                <Link
+                  href="/dashboard/conversaciones/configuracion"
+                  className="inline-block text-[#0EA5E9] hover:underline text-xs"
+                >
+                  Configurar número de WhatsApp
+                </Link>
+              </div>
             ) : (
               conversations.map((c) => (
                 <button

@@ -1,3 +1,4 @@
+import { getEmpresaId } from "@/lib/db/empresa";
 import { supabase } from "@/lib/supabase";
 
 export type InboxConversation = {
@@ -68,5 +69,101 @@ export async function markConversationRead(conversationId: string): Promise<void
     .update({ unread_count: 0, updated_at: new Date().toISOString() })
     .eq("id", conversationId);
 
+  if (error) throw new Error(error.message);
+}
+
+export type ChatChannelRow = {
+  id: string;
+  empresa_id: string;
+  type: string;
+  meta_phone_number_id: string;
+  nombre: string | null;
+  provider: string;
+  provider_channel_id: string | null;
+  activo: boolean;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at?: string;
+};
+
+export async function fetchChatChannels(): Promise<ChatChannelRow[]> {
+  const { data, error } = await supabase
+    .from("chat_channels")
+    .select(
+      "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, config, created_at, updated_at"
+    )
+    .order("created_at", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r) => ({
+    id: r.id as string,
+    empresa_id: r.empresa_id as string,
+    type: (r.type as string) ?? "whatsapp",
+    meta_phone_number_id: (r.meta_phone_number_id as string) ?? "",
+    nombre: (r.nombre as string) ?? null,
+    provider: (r.provider as string) ?? "meta",
+    provider_channel_id: (r.provider_channel_id as string) ?? null,
+    activo: r.activo !== false,
+    config: (typeof r.config === "object" && r.config !== null ? r.config : {}) as Record<string, unknown>,
+    created_at: (r.created_at as string) ?? "",
+    updated_at: r.updated_at as string | undefined,
+  }));
+}
+
+export type ChatChannelFormInput = {
+  id?: string;
+  nombre: string;
+  meta_phone_number_id: string;
+  provider_channel_id: string;
+  activo: boolean;
+  display_phone_number?: string;
+};
+
+export async function saveChatChannel(input: ChatChannelFormInput): Promise<void> {
+  const empresa_id = await getEmpresaId();
+  const pid = input.meta_phone_number_id.trim();
+  if (!pid) throw new Error("Phone Number ID es obligatorio");
+
+  const config: Record<string, unknown> = {
+    phone_number_id: pid,
+  };
+  const disp = input.display_phone_number?.trim();
+  if (disp) config.display_phone_number = disp;
+
+  const base = {
+    nombre: input.nombre.trim() || "WhatsApp",
+    type: "whatsapp" as const,
+    meta_phone_number_id: pid,
+    provider: "meta",
+    provider_channel_id: input.provider_channel_id.trim() || pid,
+    activo: input.activo,
+    config,
+  };
+
+  if (input.id) {
+    const { error } = await supabase
+      .from("chat_channels")
+      .update({
+        ...base,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", input.id)
+      .eq("empresa_id", empresa_id);
+
+    if (error) throw new Error(error.message);
+    return;
+  }
+
+  const { error } = await supabase.from("chat_channels").insert({
+    empresa_id,
+    ...base,
+  });
+
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteChatChannel(id: string): Promise<void> {
+  const empresa_id = await getEmpresaId();
+  const { error } = await supabase.from("chat_channels").delete().eq("id", id).eq("empresa_id", empresa_id);
   if (error) throw new Error(error.message);
 }

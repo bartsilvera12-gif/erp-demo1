@@ -1,3 +1,7 @@
+import {
+  provisionChannelFromWebhookEnv,
+  type WebhookProvisionEnv,
+} from "@/lib/chat/channel-provision";
 import type {
   MetaInboundMessage,
   MetaWebhookValue,
@@ -69,7 +73,8 @@ async function messageExists(
  */
 export async function processInboundWebhookValue(
   supabase: SupabaseAdmin,
-  value: MetaWebhookValue
+  value: MetaWebhookValue,
+  provisionEnv?: WebhookProvisionEnv
 ): Promise<ProcessWebhookResult> {
   const errors: string[] = [];
   let processed = 0;
@@ -85,19 +90,53 @@ export async function processInboundWebhookValue(
     };
   }
 
-  const { data: channel, error: chErr } = await supabase
+  const { data: ch0, error: chErr } = await supabase
     .from("chat_channels")
-    .select("id, empresa_id, meta_phone_number_id")
+    .select("id, empresa_id, meta_phone_number_id, activo")
     .eq("meta_phone_number_id", phoneNumberId)
     .maybeSingle();
 
-  if (chErr || !channel) {
+  if (chErr) {
+    return {
+      ok: false,
+      processed: 0,
+      skipped: 0,
+      errors: [chErr.message],
+    };
+  }
+
+  let channel = ch0 as
+    | { id: string; empresa_id: string; meta_phone_number_id: string; activo: boolean | null }
+    | null;
+
+  if (channel && channel.activo === false) {
     return {
       ok: false,
       processed: 0,
       skipped: 0,
       errors: [
-        `Canal no registrado para phone_number_id=${phoneNumberId}. Inserte fila en chat_channels.`,
+        "El canal WhatsApp está desactivado. Activalo en Conversaciones → Configuración.",
+      ],
+    };
+  }
+
+  if (!channel && provisionEnv) {
+    await provisionChannelFromWebhookEnv(supabase, phoneNumberId, provisionEnv);
+    const { data: ch1 } = await supabase
+      .from("chat_channels")
+      .select("id, empresa_id, meta_phone_number_id, activo")
+      .eq("meta_phone_number_id", phoneNumberId)
+      .maybeSingle();
+    channel = ch1 as typeof channel;
+  }
+
+  if (!channel) {
+    return {
+      ok: false,
+      processed: 0,
+      skipped: 0,
+      errors: [
+        `Canal no registrado para phone_number_id=${phoneNumberId}. Configurá el canal en el ERP (Conversaciones → Configuración) o definí WHATSAPP_DEFAULT_EMPRESA_ID y WHATSAPP_PHONE_NUMBER_ID (mismo ID que en Meta) en el servidor.`,
       ],
     };
   }
@@ -252,7 +291,8 @@ export async function processInboundWebhookValue(
  */
 export async function processWhatsAppWebhookBody(
   supabase: SupabaseAdmin,
-  body: unknown
+  body: unknown,
+  provisionEnv?: WebhookProvisionEnv
 ): Promise<ProcessWebhookResult> {
   const aggregated: ProcessWebhookResult = {
     ok: true,
@@ -278,7 +318,7 @@ export async function processWhatsAppWebhookBody(
       const value = change.value;
       if (!value?.messages?.length) continue;
 
-      const r = await processInboundWebhookValue(supabase, value);
+      const r = await processInboundWebhookValue(supabase, value, provisionEnv);
       aggregated.processed += r.processed;
       aggregated.skipped += r.skipped;
       aggregated.errors.push(...r.errors);
