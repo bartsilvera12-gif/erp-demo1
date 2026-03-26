@@ -117,6 +117,8 @@ export type ChatChannelFormInput = {
   provider_channel_id: string;
   activo: boolean;
   display_phone_number?: string;
+  /** Token Meta para enviar desde el ERP; en edición, vacío = no cambiar el guardado */
+  whatsapp_access_token?: string;
 };
 
 export async function saveChatChannel(input: ChatChannelFormInput): Promise<void> {
@@ -140,13 +142,19 @@ export async function saveChatChannel(input: ChatChannelFormInput): Promise<void
     config,
   };
 
+  const tokenPatch = input.whatsapp_access_token?.trim();
+
   if (input.id) {
+    const updatePayload: Record<string, unknown> = {
+      ...base,
+      updated_at: new Date().toISOString(),
+    };
+    if (tokenPatch) {
+      updatePayload.whatsapp_access_token = tokenPatch;
+    }
     const { error } = await supabase
       .from("chat_channels")
-      .update({
-        ...base,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq("id", input.id)
       .eq("empresa_id", empresa_id);
 
@@ -157,6 +165,7 @@ export async function saveChatChannel(input: ChatChannelFormInput): Promise<void
   const { error } = await supabase.from("chat_channels").insert({
     empresa_id,
     ...base,
+    whatsapp_access_token: tokenPatch || null,
   });
 
   if (error) throw new Error(error.message);

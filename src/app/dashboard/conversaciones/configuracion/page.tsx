@@ -17,6 +17,7 @@ function emptyForm(): ChatChannelFormInput {
     provider_channel_id: "",
     activo: true,
     display_phone_number: "",
+    whatsapp_access_token: "",
   };
 }
 
@@ -57,6 +58,7 @@ export default function ConfiguracionCanalesPage() {
         typeof row.config?.display_phone_number === "string"
           ? row.config.display_phone_number
           : "",
+      whatsapp_access_token: "",
     });
   }
 
@@ -185,6 +187,27 @@ export default function ConfiguracionCanalesPage() {
               placeholder="+595 981 000000"
             />
             <p className="text-xs text-slate-400 mt-1">Se guarda en config para referencia; no afecta el webhook.</p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">
+              Token de acceso Meta (enviar mensajes)
+            </label>
+            <input
+              type="password"
+              autoComplete="off"
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono"
+              value={form.whatsapp_access_token ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, whatsapp_access_token: e.target.value }))}
+              placeholder={
+                editingId
+                  ? "Dejar vacío para no cambiar el token guardado"
+                  : "Pegá el token permanente de la app (WhatsApp)"
+              }
+            />
+            <p className="text-xs text-slate-400 mt-1">
+              Necesario para el botón Enviar en Conversaciones. Alternativa: variable{" "}
+              <code className="text-[10px] bg-slate-100 px-1 rounded">WHATSAPP_TOKEN</code> en Vercel.
+            </p>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-700">
             <input

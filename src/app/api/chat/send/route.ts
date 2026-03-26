@@ -22,14 +22,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "No autenticado" }, { status: 401 });
     }
 
-    const token = process.env.WHATSAPP_TOKEN?.trim();
-    if (!token) {
-      return NextResponse.json(
-        { ok: false, error: "WHATSAPP_TOKEN no configurado en el servidor" },
-        { status: 500 }
-      );
-    }
-
     const body = await request.json().catch(() => null);
     const conversationId =
       body && typeof body === "object" && typeof (body as { conversation_id?: string }).conversation_id === "string"
@@ -71,7 +63,7 @@ export async function POST(request: NextRequest) {
 
     const { data: channel } = await supabase
       .from("chat_channels")
-      .select("meta_phone_number_id, activo")
+      .select("meta_phone_number_id, activo, whatsapp_access_token")
       .eq("id", conv.channel_id as string)
       .maybeSingle();
 
@@ -91,6 +83,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { ok: false, error: "Falta teléfono del contacto o phone_number_id del canal" },
         { status: 400 }
+      );
+    }
+
+    const rowToken =
+      typeof (channel as { whatsapp_access_token?: string } | null)?.whatsapp_access_token ===
+        "string"
+        ? (channel as { whatsapp_access_token: string }).whatsapp_access_token.trim()
+        : "";
+    const token = rowToken || process.env.WHATSAPP_TOKEN?.trim();
+    if (!token) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Falta token de Meta para enviar: configurá WHATSAPP_TOKEN en Vercel o el token del canal en Conversaciones → Configuración.",
+        },
+        { status: 500 }
       );
     }
 

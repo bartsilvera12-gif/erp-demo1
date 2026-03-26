@@ -39,7 +39,8 @@ export default function ConversacionesPage() {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingMsg, setLoadingMsg] = useState(false);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [hasActiveChannel, setHasActiveChannel] = useState<boolean | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -47,9 +48,9 @@ export default function ConversacionesPage() {
     try {
       const rows = await fetchChatConversations();
       setConversations(rows);
-      setError(null);
+      setListError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error al cargar conversaciones");
+      setListError(e instanceof Error ? e.message : "Error al cargar conversaciones");
     } finally {
       setLoadingList(false);
     }
@@ -67,7 +68,7 @@ export default function ConversacionesPage() {
       if (err) throw new Error(err.message);
       setMessages((data ?? []) as ChatMessage[]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error al cargar mensajes");
+      setListError(e instanceof Error ? e.message : "Error al cargar mensajes");
     } finally {
       setLoadingMsg(false);
     }
@@ -120,7 +121,7 @@ export default function ConversacionesPage() {
     e.preventDefault();
     if (!selectedId || !input.trim() || sending) return;
     setSending(true);
-    setError(null);
+    setSendError(null);
     try {
       const res = await fetch("/api/chat/send", {
         method: "POST",
@@ -128,15 +129,21 @@ export default function ConversacionesPage() {
         credentials: "same-origin",
         body: JSON.stringify({ conversation_id: selectedId, message: input.trim() }),
       });
-      const json = await res.json().catch(() => ({}));
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        meta?: unknown;
+      };
       if (!res.ok) {
-        throw new Error(typeof json.error === "string" ? json.error : "Error al enviar");
+        const base =
+          typeof json.error === "string" ? json.error : res.status === 401 ? "Sesión expirada o no autenticado" : `Error al enviar (HTTP ${res.status})`;
+        throw new Error(base);
       }
       setInput("");
+      setSendError(null);
       await loadMessages(selectedId);
       await loadConversations();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al enviar");
+      setSendError(err instanceof Error ? err.message : "Error al enviar");
     } finally {
       setSending(false);
     }
@@ -168,9 +175,9 @@ export default function ConversacionesPage() {
         </div>
       )}
 
-      {error && (
+      {listError && (
         <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-2">
-          {error}
+          {listError}
         </div>
       )}
 
@@ -287,8 +294,14 @@ export default function ConversacionesPage() {
 
               <form
                 onSubmit={handleSend}
-                className="p-3 border-t border-slate-200 bg-white flex gap-2"
+                className="p-3 border-t border-slate-200 bg-white flex flex-col gap-2"
               >
+                {sendError && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {sendError}
+                  </div>
+                )}
+                <div className="flex gap-2">
                 <input
                   className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#0EA5E9]/30 focus:border-[#0EA5E9] outline-none"
                   placeholder="Escribí un mensaje…"
@@ -303,6 +316,7 @@ export default function ConversacionesPage() {
                 >
                   {sending ? "…" : "Enviar"}
                 </button>
+                </div>
               </form>
             </>
           )}
