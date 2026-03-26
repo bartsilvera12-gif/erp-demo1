@@ -294,6 +294,14 @@ export function collectMetaWebhookMessageValues(body: unknown): MetaWebhookValue
   const out: MetaWebhookValue[] = [];
   if (!body || typeof body !== "object") return out;
 
+  // n8n a veces serializa el lote como array con un ítem por mensaje
+  if (Array.isArray(body)) {
+    for (const item of body) {
+      out.push(...collectMetaWebhookMessageValues(item));
+    }
+    return out;
+  }
+
   const root = body as Record<string, unknown>;
   const entries = (root.entry as Array<{ changes?: unknown[] }> | undefined) ?? [];
 
