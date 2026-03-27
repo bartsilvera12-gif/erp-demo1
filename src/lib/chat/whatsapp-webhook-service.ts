@@ -3,6 +3,11 @@ import {
   type WebhookProvisionEnv,
 } from "@/lib/chat/channel-provision";
 import { createFlowEngine } from "@/lib/chat/flow-engine-service";
+import {
+  getFirstActiveNodeCodeForFlow,
+  listActiveWhatsappFlowsForEmpresa,
+  syncWhatsappConversationFlowFromCatalog,
+} from "@/lib/chat/resolve-whatsapp-active-flow";
 import { saveProspectoFromWebhook } from "@/lib/crm/storage";
 import type {
   MetaInboundMessage,
@@ -254,6 +259,32 @@ export async function processInboundWebhookValue(
         : new Date().toISOString();
 
       if (!existingConv) {
+        const catalogNew = await listActiveWhatsappFlowsForEmpresa(supabase, empresaId);
+        let flowCodeIns: string | null = null;
+        let nodeIns: string | null = null;
+        if (catalogNew.kind === "single") {
+          flowCodeIns = catalogNew.flowCode;
+          nodeIns =
+            (await getFirstActiveNodeCodeForFlow(supabase, empresaId, flowCodeIns)) ?? "inicio";
+          console.info("[webhook/whatsapp][flow-resolve]", "resolved_active_flow", {
+            context: "new_conversation_insert",
+            empresaId,
+            flowCode: flowCodeIns,
+            flow_current_node: nodeIns,
+          });
+        } else if (catalogNew.kind === "multiple") {
+          console.error("[webhook/whatsapp][flow-resolve]", "multiple_active_flows", {
+            context: "new_conversation_insert",
+            empresaId,
+            activeFlowCodes: catalogNew.flowCodes,
+          });
+        } else {
+          console.warn("[webhook/whatsapp][flow-resolve]", "no_active_flow_found", {
+            context: "new_conversation_insert",
+            empresaId,
+          });
+        }
+
         const { data: conv, error: convErr } = await supabase
           .from("chat_conversations")
           .insert({
@@ -261,8 +292,8 @@ export async function processInboundWebhookValue(
             channel_id: channelId,
             contact_id: contactId,
             status: "nuevo",
-            flow_code: "sorteo_default",
-            flow_current_node: "inicio",
+            flow_code: flowCodeIns,
+            flow_current_node: nodeIns,
             flow_status: "bot",
             human_taken_over: false,
             last_message_at: null,
@@ -294,6 +325,16 @@ export async function processInboundWebhookValue(
       }
 
       const conversationId = existingConv.id as string;
+
+      const syncedFlow = await syncWhatsappConversationFlowFromCatalog(supabase, empresaId, conversationId, {
+        flow_code: (existingConv as { flow_code?: string | null }).flow_code ?? null,
+        flow_current_node: (existingConv as { flow_current_node?: string | null }).flow_current_node ?? null,
+      });
+      existingConv = {
+        ...existingConv,
+        flow_code: syncedFlow.flow_code,
+        flow_current_node: syncedFlow.flow_current_node,
+      };
 
       const logW = "[webhook/whatsapp][inbound]";
       console.info(logW, "message_received", {
@@ -374,10 +415,8 @@ export async function processInboundWebhookValue(
       await supabase
         .from("chat_conversations")
         .update({
-          flow_code:
-            (existingConv as { flow_code?: string | null }).flow_code ?? "sorteo_default",
-          flow_current_node:
-            (existingConv as { flow_current_node?: string | null }).flow_current_node ?? "inicio",
+          flow_code: (existingConv as { flow_code?: string | null }).flow_code ?? null,
+          flow_current_node: (existingConv as { flow_current_node?: string | null }).flow_current_node ?? null,
           flow_status:
             (existingConv as { flow_status?: string | null }).flow_status ?? "bot",
           human_taken_over:

@@ -1,6 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextRequest, NextResponse } from "next/server";
 import { createFlowEngine } from "@/lib/chat/flow-engine-service";
+import {
+  getFirstActiveNodeCodeForFlow,
+  listActiveWhatsappFlowsForEmpresa,
+} from "@/lib/chat/resolve-whatsapp-active-flow";
 import { getAuthWithRol } from "@/lib/middleware/auth";
 
 function getSupabaseAdmin() {
@@ -52,9 +56,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const flowCode = body.flow_code?.trim() || "sorteo_default";
-    const nodeCode = body.node_code?.trim() || "inicio";
-
     const supabase = getSupabaseAdmin();
     if (!empresaId) {
       const { data: convEmpresa, error: convEmpresaErr } = await supabase
@@ -72,6 +73,36 @@ export async function POST(request: NextRequest) {
         );
       }
       empresaId = convEmpresa.empresa_id as string;
+    }
+
+    let flowCode = body.flow_code?.trim() ?? "";
+    let nodeCode = body.node_code?.trim() ?? "";
+
+    if (!flowCode) {
+      const cat = await listActiveWhatsappFlowsForEmpresa(supabase, empresaId);
+      if (cat.kind === "single") {
+        flowCode = cat.flowCode;
+      } else if (cat.kind === "none") {
+        return NextResponse.json(
+          { ok: false, error: "No hay flujos WhatsApp activos; activá uno o pasá flow_code en el body." },
+          { status: 400 }
+        );
+      } else {
+        return NextResponse.json(
+          {
+            ok: false,
+            error:
+              "Hay varios flujos WhatsApp activos; indicá flow_code explícito en el body para test-start.",
+            active_flow_codes: cat.flowCodes,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (!nodeCode) {
+      nodeCode =
+        (await getFirstActiveNodeCodeForFlow(supabase, empresaId, flowCode)) || "inicio";
     }
 
     const { data: updated, error: upErr } = await supabase
