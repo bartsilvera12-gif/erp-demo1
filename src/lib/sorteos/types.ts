@@ -14,7 +14,7 @@ export type SorteoConversacionEstado =
   | "cancelled"
   | "closed_no_response";
 
-export type SorteoEntradaEstadoPago = "pendiente" | "confirmado" | "rechazado";
+export type SorteoEntradaEstadoPago = "pendiente" | "pendiente_revision" | "confirmado" | "rechazado";
 
 export interface Sorteo {
   id: string;
@@ -79,8 +79,26 @@ export interface SorteoEntrada {
   validado_at: string | null;
   created_at: string;
   updated_at: string;
+  numero_orden?: number | null;
+  chat_conversation_id?: string | null;
+  flow_code?: string | null;
+  idempotency_key?: string | null;
   sorteos?: { nombre: string } | null;
 }
+
+/** Fila agregada para la vista Cupones (una por orden con cupones listados). */
+export type SorteoCuponOrdenRow = {
+  entrada_id: string;
+  numero_orden: number;
+  nombre_participante: string;
+  whatsapp_numero: string;
+  cantidad_boletos: number;
+  estado_pago: SorteoEntradaEstadoPago;
+  created_at: string;
+  chat_conversation_id: string | null;
+  sorteo_nombre: string;
+  numeros_cupon: string[];
+};
 
 export interface SorteoCupon {
   id: string;

@@ -74,7 +74,6 @@ const MENU_STRUCTURE: MenuItem[] = [
     icon: Ticket,
     children: [
       { label: "Sorteos", href: "/sorteos" },
-      { label: "Conversaciones", href: "/sorteos/conversaciones" },
       { label: "Entradas", href: "/sorteos/entradas" },
       { label: "Cupones", href: "/sorteos/cupones" },
     ],

@@ -5,6 +5,7 @@ import {
 } from "@/lib/chat/whatsapp-send-service";
 import type { SupabaseAdmin } from "@/lib/chat/types";
 import { normalizeWaPhone } from "@/lib/chat/whatsapp-webhook-service";
+import { ensureSorteoOrderFromChat } from "@/lib/sorteos/sorteo-order-from-chat";
 
 type ConversationFlowState = {
   id: string;
@@ -475,6 +476,25 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       if (raw === null || raw === undefined) return "";
       return String(raw);
     });
+  }
+
+  async function buildImageInputReminderText(
+    node: FlowNode,
+    conversationId: string,
+    reason: "expected_image_got_text" | "expected_image_got_non_image"
+  ): Promise<string> {
+    const flowVars = await getConversationFlowDataMap({
+      empresaId: node.empresa_id,
+      conversationId,
+      flowCode: node.flow_code,
+    });
+    const base = interpolateTemplate(node.message_text?.trim() || "", flowVars).trim();
+    const tail =
+      reason === "expected_image_got_text"
+        ? "Por favor enviá el comprobante como imagen (foto o captura), no como mensaje de texto."
+        : "Ese archivo no es una imagen. Enviá el comprobante como foto o imagen (por ejemplo JPG o PNG).";
+    if (base) return `${base}\n\n${tail}`;
+    return tail;
   }
 
   async function getNodeBlocks(node: FlowNode): Promise<FlowNodeBlock[]> {
@@ -987,7 +1007,11 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     }
     if (currentNode.node_type === "image_input") {
       const sendCtx = await getConversationSendContext(state.id);
-      const reminder = "Por favor envía una imagen del comprobante";
+      const reminder = await buildImageInputReminderText(
+        currentNode,
+        state.id,
+        "expected_image_got_text"
+      );
       const send = await sendWhatsAppText({
         toDigits: sendCtx.toDigits,
         phoneNumberId: sendCtx.phoneNumberId,
@@ -1125,6 +1149,45 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       accessToken: sendCtx.token,
       mimeTypeHint: params.mimeType ?? null,
     });
+    const mimeNorm = (media.mimeType || "").toLowerCase();
+    if (!mimeNorm.startsWith("image/")) {
+      const reminder = await buildImageInputReminderText(
+        currentNode,
+        state.id,
+        "expected_image_got_non_image"
+      );
+      const send = await sendWhatsAppText({
+        toDigits: sendCtx.toDigits,
+        phoneNumberId: sendCtx.phoneNumberId,
+        accessToken: sendCtx.token,
+        text: reminder,
+      });
+      if (send.ok) {
+        await persistOutgoingMessage({
+          conversation: state,
+          content: reminder,
+          messageType: "text",
+          waMessageId: send.waMessageId,
+          raw: send.raw,
+          senderType: "system",
+          automationSource: "flow_engine",
+        });
+      }
+      await insertFlowEvent({
+        empresaId: state.empresa_id,
+        conversationId: state.id,
+        flowCode: state.flow_code,
+        nodeCode: currentNode.node_code,
+        eventType: "image_expected_non_image_received",
+        payload: {
+          mime_type: media.mimeType,
+          media_id: params.mediaId,
+          raw: params.rawPayload,
+        },
+      });
+      return { ok: true, status: "ignored_non_image_mime" };
+    }
+
     await ensureChatMediaBucket();
 
     const ext = extensionFromMime(media.mimeType);
@@ -1168,6 +1231,43 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         save_as_field: currentNode.save_as_field ?? null,
       },
     });
+
+    const flowDataForSorteo = await getConversationFlowDataMap({
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code,
+    });
+    const sorteoOrderResult = await ensureSorteoOrderFromChat(supabase, {
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code,
+      mediaId: params.mediaId,
+      whatsappNumero: sendCtx.toDigits,
+      comprobanteUrl: publicUrl,
+      flowData: flowDataForSorteo,
+    });
+    if (!sorteoOrderResult.ok) {
+      return {
+        ok: false,
+        status: "sorteo_order_failed",
+        error: sorteoOrderResult.message,
+      };
+    }
+    if (!sorteoOrderResult.skipped) {
+      await insertFlowEvent({
+        empresaId: state.empresa_id,
+        conversationId: state.id,
+        flowCode: state.flow_code,
+        nodeCode: currentNode.node_code,
+        eventType: "sorteo_order_ensured",
+        payload: {
+          idempotent: sorteoOrderResult.idempotent,
+          entrada_id: sorteoOrderResult.entradaId,
+          numero_orden: sorteoOrderResult.numeroOrden,
+          cupones: sorteoOrderResult.cupones.map((c) => c.numero_cupon),
+        },
+      });
+    }
 
     if (!currentNode.next_node_code) {
       return { ok: true, status: "captured_no_next_node" };

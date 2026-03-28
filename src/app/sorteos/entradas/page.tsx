@@ -24,6 +24,14 @@ function formatFecha(iso: string | null) {
   }
 }
 
+function estadoPagoLabel(e: string) {
+  if (e === "pendiente_revision") return "Pendiente revisión";
+  if (e === "pendiente") return "Pendiente";
+  if (e === "confirmado") return "Confirmado";
+  if (e === "rechazado") return "Rechazado";
+  return e;
+}
+
 export default function SorteoEntradasPage() {
   const [rows, setRows] = useState<SorteoEntrada[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -46,9 +54,6 @@ export default function SorteoEntradasPage() {
         <Link href="/sorteos" className="text-slate-600 hover:text-[#0EA5E9]">
           Sorteos
         </Link>
-        <Link href="/sorteos/conversaciones" className="text-slate-600 hover:text-[#0EA5E9]">
-          Conversaciones
-        </Link>
         <span className="font-semibold text-[#0EA5E9]">Entradas</span>
         <Link href="/sorteos/cupones" className="text-slate-600 hover:text-[#0EA5E9]">
           Cupones
@@ -65,6 +70,7 @@ export default function SorteoEntradasPage() {
             <table className="w-full min-w-[960px]">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="text-left text-sm font-semibold text-slate-600 px-5 py-3">Nº orden</th>
                   <th className="text-left text-sm font-semibold text-slate-600 px-5 py-3">Sorteo</th>
                   <th className="text-left text-sm font-semibold text-slate-600 px-5 py-3">Participante</th>
                   <th className="text-left text-sm font-semibold text-slate-600 px-5 py-3">Documento</th>
@@ -79,6 +85,9 @@ export default function SorteoEntradasPage() {
               <tbody className="divide-y divide-slate-200">
                 {rows.map((r) => (
                   <tr key={r.id} className="hover:bg-slate-50/80">
+                    <td className="px-5 py-3 text-sm font-mono font-semibold text-slate-800">
+                      {typeof r.numero_orden === "number" ? r.numero_orden : "—"}
+                    </td>
                     <td className="px-5 py-3 text-sm text-slate-800">
                       {(r.sorteos as { nombre?: string } | undefined)?.nombre ?? "—"}
                     </td>
@@ -86,7 +95,7 @@ export default function SorteoEntradasPage() {
                     <td className="px-5 py-3 text-sm font-mono text-slate-600">{r.documento ?? "—"}</td>
                     <td className="px-5 py-3 text-sm text-right tabular-nums">{r.cantidad_boletos}</td>
                     <td className="px-5 py-3 text-sm text-right tabular-nums">{formatGs(r.monto_total)}</td>
-                    <td className="px-5 py-3 text-sm">{r.estado_pago}</td>
+                    <td className="px-5 py-3 text-sm">{estadoPagoLabel(r.estado_pago)}</td>
                     <td className="px-5 py-3 text-sm whitespace-nowrap">{formatFecha(r.fecha_pago)}</td>
                     <td className="px-5 py-3 text-sm">{r.validado_por ?? "—"}</td>
                     <td className="px-5 py-3 text-sm whitespace-nowrap">{formatFecha(r.created_at)}</td>

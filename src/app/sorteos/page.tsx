@@ -59,9 +59,6 @@ export default function SorteosListPage() {
 
       <nav className="flex flex-wrap gap-2 text-sm border-b border-slate-200 pb-3">
         <span className="font-semibold text-[#0EA5E9]">Sorteos</span>
-        <Link href="/sorteos/conversaciones" className="text-slate-600 hover:text-[#0EA5E9]">
-          Conversaciones
-        </Link>
         <Link href="/sorteos/entradas" className="text-slate-600 hover:text-[#0EA5E9]">
           Entradas
         </Link>
