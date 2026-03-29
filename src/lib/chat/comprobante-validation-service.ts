@@ -65,8 +65,9 @@ export function extractReceiptFieldsFromOcr(fullText: string): ExtractedReceiptF
   }
 
   let referencia = "";
+  // `referencia` antes de `ref` para no matchear el prefijo "Ref" de la palabra "Referencia".
   const refRe =
-    /(?:ref\.?|referencia|operaci[oó]n|comprobante|n[°º]|cod\.?|nro\.?)\s*[:\s.-]*([A-Z0-9][A-Z0-9\-/.]{5,})/i;
+    /(?:referencia|operaci[oó]n|comprobante|n[°º]|cod\.?|nro\.?|ref\.?)\s*[:\s.-]*([A-Z0-9][A-Z0-9\-/.]{5,})/i;
   const refM = t.match(refRe);
   if (refM?.[1]) referencia = refM[1].trim();
 
@@ -225,6 +226,10 @@ type PipelineCtx = {
   bytes: Buffer;
   mimeType: string;
   settings: ComprobanteValidationSettings;
+  /**
+   * Solo pruebas automatizadas: si se define, no se llama a Vision y se usa como texto OCR crudo.
+   */
+  ocrTextOverride?: string | null;
 };
 
 async function insertValidationRow(
@@ -351,11 +356,15 @@ export async function runComprobanteValidationPipeline(ctx: PipelineCtx): Promis
   let ocrFailedReason: string | null = null;
 
   if (!isPdf) {
-    try {
-      const r = await runGoogleVisionDocumentOcr(ctx.bytes);
-      fullText = r.fullText;
-    } catch (e) {
-      ocrFailedReason = e instanceof Error ? e.message : "ocr_error";
+    if (ctx.ocrTextOverride !== undefined && ctx.ocrTextOverride !== null) {
+      fullText = ctx.ocrTextOverride;
+    } else {
+      try {
+        const r = await runGoogleVisionDocumentOcr(ctx.bytes);
+        fullText = r.fullText;
+      } catch (e) {
+        ocrFailedReason = e instanceof Error ? e.message : "ocr_error";
+      }
     }
   } else {
     ocrFailedReason = "pdf_sin_ocr_automatico";

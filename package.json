@@ -17,7 +17,8 @@
     "verify:sorteo-rpc": "tsx scripts/verify-sorteo-order-rpc.ts",
     "db:apply-sorteo-migrations": "tsx scripts/apply-sorteo-supabase-migrations.ts",
     "verify:sorteo-integridad": "tsx scripts/verify-sorteo-integridad-nombre-monto.ts",
-    "verify:flow-sessions": "tsx scripts/verify-flow-session-isolation.ts"
+    "verify:flow-sessions": "tsx scripts/verify-flow-session-isolation.ts",
+    "test:comprobante-tech": "tsx scripts/technical-tests-comprobante-full.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.9.0",
@@ -41,6 +42,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "playwright": "^1.58.2",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
