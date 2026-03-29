@@ -1,4 +1,9 @@
 import {
+  flowTrace,
+  isFlowEventHydrationDisabled,
+  summarizeFlowDataForTrace,
+} from "@/lib/chat/flow-trace-log";
+import {
   sendWhatsAppInteractiveButtons,
   sendWhatsAppImage,
   sendWhatsAppText,
@@ -588,6 +593,15 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         };
       }
 
+      flowTrace("inbound_present_engine_state", {
+        conversation_id: state.id,
+        empresa_id: state.empresa_id,
+        active_flow_session_id: state.active_flow_session_id ?? null,
+        flow_current_node: state.flow_current_node,
+        flow_code: state.flow_code,
+        event: "ensure_current_node_presented",
+      });
+
       const flowCode = state.flow_code as string;
       const nodeCode = state.flow_current_node as string;
 
@@ -721,10 +735,22 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     conversationId: string;
     flowCode: string | null;
     flowSessionId: string | null | undefined;
+    traceReadContext?: string;
   }): Promise<Record<string, string>> {
     const fc = input.flowCode?.trim();
     const sid = input.flowSessionId?.trim();
-    if (!fc || !sid) return {};
+    if (!fc || !sid) {
+      flowTrace("flow_data_read", {
+        conversation_id: input.conversationId,
+        empresa_id: input.empresaId,
+        flow_code: fc ?? null,
+        flow_session_id_read: sid ?? null,
+        read_context: input.traceReadContext ?? "unspecified",
+        empty_reason: !fc ? "missing_flow_code" : "missing_flow_session_id",
+        field_count: 0,
+      });
+      return {};
+    }
     const { data, error } = await supabase
       .from("chat_flow_data")
       .select("field_name, field_value")
@@ -739,6 +765,17 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       if (!key) continue;
       out[key] = String((row as { field_value?: unknown }).field_value ?? "");
     }
+    const sum = summarizeFlowDataForTrace(out);
+    flowTrace("flow_data_read", {
+      conversation_id: input.conversationId,
+      empresa_id: input.empresaId,
+      flow_code: fc,
+      flow_session_id_read: sid,
+      read_context: input.traceReadContext ?? "unspecified",
+      field_count: Object.keys(out).length,
+      flow_data_keys: sum.keys,
+      flow_data_samples: sum.samples ?? null,
+    });
     return out;
   }
 
@@ -774,6 +811,18 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     const fc = flowCode.trim();
     const sid = flowSessionId?.trim();
     if (!fc || !sid) return base;
+
+    if (isFlowEventHydrationDisabled()) {
+      flowTrace("flow_event_hydration_skipped", {
+        conversation_id: conversationId,
+        flow_code: fc,
+        flow_session_id: sid,
+        reason: "FLOW_DISABLE_EVENT_HYDRATION",
+        base_field_count: Object.keys(base).length,
+        flow_data_keys: summarizeFlowDataForTrace(base).keys,
+      });
+      return base;
+    }
 
     const { data: rows, error } = await supabase
       .from("chat_flow_events")
@@ -830,6 +879,16 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         keysAfter: Object.keys(merged).length,
       });
     }
+    const sumM = summarizeFlowDataForTrace(merged);
+    flowTrace("flow_data_after_event_hydrate", {
+      conversation_id: conversationId,
+      flow_code: fc,
+      flow_session_id: sid,
+      event: "resumen_vars_from_events",
+      event_count: rows?.length ?? 0,
+      flow_data_keys: sumM.keys,
+      flow_data_samples: sumM.samples ?? null,
+    });
     return merged;
   }
 
@@ -855,6 +914,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       conversationId,
       flowCode: node.flow_code,
       flowSessionId: st?.active_flow_session_id ?? null,
+      traceReadContext: "image_input_reminder_text",
     });
     const base = interpolateTemplate(node.message_text?.trim() || "", flowVars).trim();
     const tail =
@@ -967,8 +1027,22 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       conversationId: state.id,
       flowCode: state.flow_code,
       flowSessionId: state.active_flow_session_id,
+      traceReadContext: "send_current_node_confirmacion_resumen",
     });
     const flowVars = { ...flowVarsBase, ...(params.mergeFlowVars ?? {}) };
+    const sumV = summarizeFlowDataForTrace(flowVars);
+    flowTrace("send_node_interpolate", {
+      conversation_id: state.id,
+      empresa_id: state.empresa_id,
+      flow_code: state.flow_code,
+      flow_current_node: state.flow_current_node,
+      active_flow_session_id: state.active_flow_session_id ?? null,
+      flow_session_id_used_for_vars: state.active_flow_session_id ?? null,
+      event: "confirmacion_o_resumen_mensaje",
+      merge_flow_var_keys: params.mergeFlowVars ? Object.keys(params.mergeFlowVars).sort() : [],
+      flow_data_keys: sumV.keys,
+      flow_data_samples: sumV.samples ?? null,
+    });
     const fallbackText = interpolateTemplate(
       node.message_text?.trim() || "Continuemos con el flujo.",
       flowVars
@@ -1328,6 +1402,15 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       if (payloadSaveErr) {
         return { ok: false, status: "save_option_payload_failed", error: payloadSaveErr.message };
       }
+      flowTrace("flow_data_write", {
+        conversation_id: state.id,
+        empresa_id: state.empresa_id,
+        flow_code: state.flow_code,
+        flow_session_id_write: flowSidInteractive,
+        node_code: currentNode.node_code,
+        event: "interactive_option_payload",
+        field_names: payloadEntries.map(([k]) => k.trim()).filter(Boolean),
+      });
     }
 
     if (!selected.next_node_code) {
@@ -1476,6 +1559,16 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       if (dataErr) {
         return { ok: false, status: "save_text_failed", error: dataErr.message };
       }
+      flowTrace("flow_data_write", {
+        conversation_id: state.id,
+        empresa_id: state.empresa_id,
+        flow_code: state.flow_code,
+        flow_session_id_write: textFlowSid,
+        node_code: currentNode.node_code,
+        event: "text_captured",
+        field_name: currentNode.save_as_field ?? null,
+        field_value_len: textValue.length,
+      });
       const sfLower = currentNode.save_as_field.trim().toLowerCase();
       if (["nombre", "apellido", "nombre_y_apellido"].includes(sfLower)) {
         const { error: clrErr } = await supabase.from("chat_flow_data").upsert(
@@ -1711,6 +1804,16 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       };
     }
 
+    flowTrace("process_image_reply_state", {
+      conversation_id: state.id,
+      empresa_id: state.empresa_id,
+      active_flow_session_id: state.active_flow_session_id ?? null,
+      flow_session_id_for_comprobante: imgFlowSid,
+      flow_current_node: state.flow_current_node,
+      flow_code: state.flow_code,
+      event: "comprobante_image_input",
+    });
+
     if (currentNode.save_as_field) {
       const { error: upErr } = await supabase
         .from("chat_flow_data")
@@ -1739,6 +1842,15 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         });
         return { ok: false, status: "save_image_failed", error: upErr.message };
       }
+      flowTrace("flow_data_write", {
+        conversation_id: state.id,
+        empresa_id: state.empresa_id,
+        flow_code: state.flow_code,
+        flow_session_id_write: imgFlowSid,
+        node_code: currentNode.node_code,
+        event: "comprobante_image_url",
+        field_name: currentNode.save_as_field ?? null,
+      });
     }
 
     await insertFlowEvent({
@@ -1761,6 +1873,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       conversationId: state.id,
       flowCode: state.flow_code,
       flowSessionId: imgFlowSid,
+      traceReadContext: "before_ensure_sorteo_order",
     });
     const flowDataForSorteo = await hydrateFlowDataFromSessionEvents(
       state.id,
@@ -1768,10 +1881,20 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       rawFlowData,
       imgFlowSid
     );
+    const sorteoInputTrace = summarizeFlowDataForTrace(flowDataForSorteo);
+    flowTrace("process_image_reply_before_sorteo_rpc", {
+      conversation_id: state.id,
+      flow_session_id: imgFlowSid,
+      flow_code: state.flow_code,
+      event: "ensure_sorteo_order_from_chat",
+      flow_data_keys: sorteoInputTrace.keys,
+      flow_data_samples: sorteoInputTrace.samples ?? null,
+    });
     const sorteoOrderResult = await ensureSorteoOrderFromChat(supabase, {
       empresaId: state.empresa_id,
       conversationId: state.id,
       flowCode: state.flow_code,
+      flowSessionId: imgFlowSid,
       mediaId: params.mediaId,
       whatsappNumero: sendCtx.toDigits,
       comprobanteUrl: publicUrl,
@@ -1840,6 +1963,15 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         error: sorteoCtxErr.message,
       };
     }
+    flowTrace("flow_data_write", {
+      conversation_id: state.id,
+      empresa_id: state.empresa_id,
+      flow_code: state.flow_code,
+      flow_session_id_write: imgFlowSid,
+      node_code: currentNode.node_code,
+      event: "sorteo_order_context_after_rpc",
+      field_names: contextRows.map((r) => r.field_name),
+    });
 
     await insertFlowEvent({
       empresaId: state.empresa_id,

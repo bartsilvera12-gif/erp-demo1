@@ -1,3 +1,4 @@
+import { flowTrace } from "@/lib/chat/flow-trace-log";
 import type { SupabaseAdmin } from "@/lib/chat/types";
 import {
   insertActiveFlowSessionRow,
@@ -328,6 +329,27 @@ export async function restartWhatsappConversationToFlowStart(
 
   const firstNode = (await getFirstActiveNodeCodeForFlow(supabase, empresaId, targetFlow)) ?? "inicio";
 
+  const { data: convBeforeRestart } = await supabase
+    .from("chat_conversations")
+    .select("active_flow_session_id, flow_code, flow_current_node")
+    .eq("id", conversationId)
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+  const previousActiveFlowSessionId =
+    (convBeforeRestart as { active_flow_session_id?: string | null } | null)?.active_flow_session_id ??
+    null;
+
+  flowTrace("restart_flow_session_before_close_old", {
+    conversation_id: conversationId,
+    empresa_id: empresaId,
+    trigger: opts.trigger,
+    target_flow_code: targetFlow,
+    previous_active_flow_session_id: previousActiveFlowSessionId,
+    previous_flow_code: (convBeforeRestart as { flow_code?: string | null } | null)?.flow_code ?? null,
+    previous_flow_current_node:
+      (convBeforeRestart as { flow_current_node?: string | null } | null)?.flow_current_node ?? null,
+  });
+
   await markConversationActiveSessionsEnded(
     supabase,
     empresaId,
@@ -392,6 +414,17 @@ export async function restartWhatsappConversationToFlowStart(
       trigger: opts.trigger,
     });
   }
+
+  flowTrace("restart_flow_session_complete", {
+    conversation_id: conversationId,
+    empresa_id: empresaId,
+    trigger: opts.trigger,
+    target_flow_code: targetFlow,
+    first_node: firstNode,
+    previous_active_flow_session_id: previousActiveFlowSessionId,
+    new_flow_session_id: newSessionId,
+    event: "flow_pointer_reset",
+  });
 
   console.info(CONV_LOG, "conversation_restarted", {
     conversationId,

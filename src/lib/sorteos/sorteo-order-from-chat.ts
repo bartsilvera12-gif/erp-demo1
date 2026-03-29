@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { flowTrace, summarizeFlowDataForTrace } from "@/lib/chat/flow-trace-log";
 import { parseMoneyPy } from "@/lib/sorteos/parse-money-py";
 
 /** Clave estable: mismo comprobante (media) en misma conversación y flujo → una sola orden. */
@@ -259,6 +260,8 @@ export type EnsureSorteoOrderFromChatInput = {
   empresaId: string;
   conversationId: string;
   flowCode: string;
+  /** Sesión activa al armar la orden (solo traza; no altera RPC). */
+  flowSessionId?: string | null;
   mediaId: string;
   whatsappNumero: string;
   comprobanteUrl: string;
@@ -420,6 +423,16 @@ export async function ensureSorteoOrderFromChat(
 ): Promise<EnsureSorteoOrderFromChatResult> {
   const flowCode = input.flowCode.trim();
   const flowData = prepareFlowDataForSorteoOrder(input.flowData);
+  const traceFd = summarizeFlowDataForTrace(flowData);
+  flowTrace("ensure_sorteo_order_enter", {
+    conversation_id: input.conversationId,
+    empresa_id: input.empresaId,
+    flow_code: flowCode,
+    flow_session_id_context: input.flowSessionId?.trim() ?? null,
+    media_id: input.mediaId,
+    flow_data_keys: traceFd.keys,
+    flow_data_samples: traceFd.samples ?? null,
+  });
   console.info(FLOW_SORTEO_LOG, "ensureSorteoOrderFromChat_invoke", {
     conversationId: input.conversationId,
     flowCode,
@@ -432,6 +445,13 @@ export async function ensureSorteoOrderFromChat(
 
   const sorteoId = await getSorteoIdForChatFlow(supabase, input.empresaId, flowCode);
   if (!sorteoId) {
+    flowTrace("sorteo_order_skipped", {
+      conversation_id: input.conversationId,
+      empresa_id: input.empresaId,
+      flow_code: flowCode,
+      flow_session_id_context: input.flowSessionId?.trim() ?? null,
+      reason: "flow_sin_sorteo_id",
+    });
     console.warn(FLOW_SORTEO_LOG, "ensureSorteoOrderFromChat_outcome", {
       path: "skipped",
       reason: "flow_sin_sorteo_id",
@@ -506,6 +526,13 @@ export async function ensureSorteoOrderFromChat(
   });
 
   if (error) {
+    flowTrace("sorteo_order_failed", {
+      conversation_id: input.conversationId,
+      flow_session_id_context: input.flowSessionId?.trim() ?? null,
+      flow_code: flowCode,
+      reason: "rpc_error",
+      message: error.message,
+    });
     console.error(FLOW_SORTEO_LOG, "ensureSorteoOrderFromChat_outcome", {
       path: "failed",
       reason: "rpc_error",
@@ -639,6 +666,19 @@ export async function ensureSorteoOrderFromChat(
     numeroOrden,
     cantidadBoletos,
     cuponesCount: cupones.length,
+  });
+
+  flowTrace("sorteo_order_created", {
+    conversation_id: input.conversationId,
+    empresa_id: input.empresaId,
+    flow_code: flowCode,
+    flow_session_id_context: input.flowSessionId?.trim() ?? null,
+    sorteo_id: sorteoId,
+    entrada_id: entradaId,
+    numero_orden: numeroOrden,
+    cantidad_boletos: cantidadBoletos,
+    idempotent: row.idempotent === true,
+    event: "creacion_orden_sorteo",
   });
 
   return {

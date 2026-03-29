@@ -3,6 +3,8 @@ import {
   type WebhookProvisionEnv,
 } from "@/lib/chat/channel-provision";
 import { createFlowEngine } from "@/lib/chat/flow-engine-service";
+import { insertActiveFlowSessionRow } from "@/lib/chat/flow-session-service";
+import { flowTrace } from "@/lib/chat/flow-trace-log";
 import {
   CONV_LOG,
   getFirstActiveNodeCodeForFlow,
@@ -297,7 +299,9 @@ export async function processInboundWebhookValue(
 
       let { data: existingConv } = await supabase
         .from("chat_conversations")
-        .select("id, status, unread_count, flow_code, flow_current_node, flow_status, human_taken_over")
+        .select(
+          "id, status, unread_count, flow_code, flow_current_node, flow_status, human_taken_over, active_flow_session_id"
+        )
         .eq("contact_id", contactId)
         .eq("channel_id", channelId)
         .maybeSingle();
@@ -350,15 +354,36 @@ export async function processInboundWebhookValue(
             last_message_preview: null,
             unread_count: 0,
           })
-          .select("id, status, unread_count, flow_code, flow_current_node, flow_status, human_taken_over")
+          .select(
+            "id, status, unread_count, flow_code, flow_current_node, flow_status, human_taken_over, active_flow_session_id"
+          )
           .single();
 
         if (conv) {
           existingConv = conv;
+          if (flowCodeIns) {
+            const bootSid = await insertActiveFlowSessionRow(supabase, empresaId, conv.id, flowCodeIns);
+            if (bootSid) {
+              await supabase
+                .from("chat_conversations")
+                .update({ active_flow_session_id: bootSid, updated_at: new Date().toISOString() })
+                .eq("id", conv.id)
+                .eq("empresa_id", empresaId);
+              flowTrace("new_conversation_flow_session_bootstrapped", {
+                conversation_id: conv.id,
+                empresa_id: empresaId,
+                flow_code: flowCodeIns,
+                new_flow_session_id: bootSid,
+                event: "post_insert_bootstrap",
+              });
+            }
+          }
         } else if (convErr?.code === "23505") {
           const { data: again } = await supabase
             .from("chat_conversations")
-            .select("id, status, unread_count, flow_code, flow_current_node, flow_status, human_taken_over")
+            .select(
+              "id, status, unread_count, flow_code, flow_current_node, flow_status, human_taken_over, active_flow_session_id"
+            )
             .eq("contact_id", contactId)
             .eq("channel_id", channelId)
             .maybeSingle();
@@ -598,6 +623,56 @@ export async function processInboundWebhookValue(
         .eq("id", conversationId);
 
       console.info(logW, "conversation_updated_unread", { conversationId, nextStatus });
+
+      const { data: convDbAfterUnread } = await supabase
+        .from("chat_conversations")
+        .select(
+          "flow_code, flow_current_node, active_flow_session_id, flow_status, human_taken_over"
+        )
+        .eq("id", conversationId)
+        .eq("empresa_id", empresaId)
+        .maybeSingle();
+      if (convDbAfterUnread) {
+        const ec = existingConv as {
+          flow_code?: string | null;
+          flow_current_node?: string | null;
+          flow_status?: string | null;
+          human_taken_over?: boolean | null;
+          active_flow_session_id?: string | null;
+        };
+        existingConv = {
+          ...existingConv,
+          flow_code:
+            (convDbAfterUnread as { flow_code?: string | null }).flow_code ?? ec.flow_code ?? null,
+          flow_current_node:
+            (convDbAfterUnread as { flow_current_node?: string | null }).flow_current_node ??
+            ec.flow_current_node ??
+            null,
+          flow_status:
+            (convDbAfterUnread as { flow_status?: string | null }).flow_status ?? ec.flow_status ?? null,
+          human_taken_over:
+            (convDbAfterUnread as { human_taken_over?: boolean | null }).human_taken_over ??
+            ec.human_taken_over ??
+            false,
+          active_flow_session_id: (convDbAfterUnread as { active_flow_session_id?: string | null })
+            .active_flow_session_id,
+        };
+      }
+      flowTrace("webhook_pre_engine_db_snapshot", {
+        conversation_id: conversationId,
+        empresa_id: empresaId,
+        wa_message_id: waMid,
+        restarted_this_message: restartedThisMessage,
+        restart_keyword_matched: restartKeywordMatch,
+        db_active_flow_session_id:
+          (convDbAfterUnread as { active_flow_session_id?: string | null } | null)
+            ?.active_flow_session_id ?? null,
+        db_flow_code: (convDbAfterUnread as { flow_code?: string | null } | null)?.flow_code ?? null,
+        db_flow_current_node:
+          (convDbAfterUnread as { flow_current_node?: string | null } | null)?.flow_current_node ?? null,
+        memory_active_flow_session_id:
+          (existingConv as { active_flow_session_id?: string | null }).active_flow_session_id ?? null,
+      });
 
       /**
        * 1) Presentar nodo actual si aún no se envió (botones/texto/media, etc.).
