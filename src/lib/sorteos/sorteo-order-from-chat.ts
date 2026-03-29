@@ -18,10 +18,255 @@ function norm(s: string | undefined): string {
 const FLOW_SORTEO_LOG = "[flow-sorteo]" as const;
 
 /**
+ * Contrato comercial estable por compra (misma flow_session_id).
+ * Se escribe al elegir la opción de compra y se relee en comprobante → orden.
+ */
+export const SORTEO_COMPRA_FIELD = {
+  snapCantidad: "sorteo_snap_cantidad",
+  snapOpcionLabel: "sorteo_snap_opcion_label",
+  snapMonto: "sorteo_snap_monto",
+  snapPromoNombre: "sorteo_snap_promo_nombre",
+  snapResumen: "sorteo_snap_resumen",
+  cantidad: "cantidad",
+  monto: "monto",
+  optionLabelEn: "option_label",
+  optionLabelEs: "opcion_label",
+  promoNombre: "promo_nombre",
+  resumenCompra: "resumen_compra",
+} as const;
+
+export type SorteoInteractiveOptionInput = {
+  label: string;
+  option_value: string;
+  option_payload?: unknown;
+};
+
+function mergeEntryMap(entries: [string, string][]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [k, v] of entries) {
+    const key = k.trim();
+    if (!key) continue;
+    out.set(key, v);
+  }
+  return out;
+}
+
+function getEntryCI(entries: [string, string][], name: string): string {
+  const nl = name.toLowerCase();
+  for (const [k, v] of entries) {
+    if (k.trim().toLowerCase() === nl) return norm(v);
+  }
+  return "";
+}
+
+function getFirstEntry(entries: [string, string][], names: readonly string[]): string {
+  for (const n of names) {
+    const v = getEntryCI(entries, n);
+    if (v) return v;
+  }
+  return "";
+}
+
+/**
+ * Tras armar entries desde option_payload + augmentCantidad + augmentPricing + dedupe:
+ * fija snapshot y alias canónicos para que resumen, confirmación y comprobante lean lo mismo.
+ */
+export function applySorteoInteractiveCommercialContract(
+  entries: [string, string][],
+  selected: SorteoInteractiveOptionInput
+): [string, string][] {
+  const qtyFromEntries = getFirstEntry(entries, [
+    SORTEO_COMPRA_FIELD.snapCantidad,
+    "sorteo_cantidad_opcion",
+    "cantidad_boletos",
+    SORTEO_COMPRA_FIELD.cantidad,
+    "boletos",
+    "qty",
+    "quantity",
+  ]);
+
+  let qty: number | null = null;
+  if (qtyFromEntries) {
+    const n = Number(qtyFromEntries.replace(",", "."));
+    if (Number.isFinite(n) && n >= 1) qty = Math.trunc(n);
+  }
+
+  const op =
+    selected.option_payload && typeof selected.option_payload === "object" && !Array.isArray(selected.option_payload)
+      ? (selected.option_payload as Record<string, unknown>)
+      : null;
+
+  if (qty == null && op) {
+    for (const k of [
+      "cantidad",
+      "cantidad_boletos",
+      "qty",
+      "quantity",
+      "boletos",
+      "QTY",
+      "Cantidad",
+    ]) {
+      const raw = op[k];
+      if (raw == null) continue;
+      const n = Number(String(raw).trim().replace(",", "."));
+      if (Number.isFinite(n) && n >= 1) {
+        qty = Math.trunc(n);
+        break;
+      }
+    }
+  }
+
+  if (qty == null) {
+    const ov = norm(selected.option_value);
+    if (ov) {
+      const n = Number(ov.replace(",", "."));
+      if (Number.isFinite(n) && n >= 1) qty = Math.trunc(n);
+      else {
+        const lead = ov.match(/^(\d+)/);
+        if (lead) {
+          const n2 = Number(lead[1]);
+          if (Number.isFinite(n2) && n2 >= 1) qty = Math.trunc(n2);
+        }
+      }
+    }
+  }
+
+  if (qty == null) {
+    qty = extractQtyFromFlowText(selected.label);
+  }
+
+  if (qty == null) {
+    const textHint = getFirstEntry(entries, [
+      SORTEO_COMPRA_FIELD.optionLabelEs,
+      SORTEO_COMPRA_FIELD.optionLabelEn,
+      "producto",
+      "combo",
+      "opcion",
+      "descripcion",
+    ]);
+    qty = extractQtyFromFlowText(textHint);
+  }
+
+  const label =
+    norm(selected.label) ||
+    getFirstEntry(entries, [SORTEO_COMPRA_FIELD.optionLabelEs, SORTEO_COMPRA_FIELD.optionLabelEn]);
+
+  const montoRaw = getFirstEntry(entries, [
+    SORTEO_COMPRA_FIELD.snapMonto,
+    "sorteo_monto_opcion",
+    "monto_compra",
+    "monto_promocional",
+    SORTEO_COMPRA_FIELD.monto,
+  ]);
+
+  const promoNombre = getFirstEntry(entries, [
+    SORTEO_COMPRA_FIELD.snapPromoNombre,
+    SORTEO_COMPRA_FIELD.promoNombre,
+    "promo",
+    "nombre_promo",
+  ]);
+
+  const out = mergeEntryMap(entries);
+
+  if (qty != null) {
+    const s = String(qty);
+    out.set(SORTEO_COMPRA_FIELD.snapCantidad, s);
+    out.set(SORTEO_COMPRA_FIELD.cantidad, s);
+    out.set("cantidad_boletos", s);
+    out.set("sorteo_cantidad_opcion", s);
+  }
+
+  if (label) {
+    out.set(SORTEO_COMPRA_FIELD.snapOpcionLabel, label);
+    out.set(SORTEO_COMPRA_FIELD.optionLabelEs, label);
+    out.set(SORTEO_COMPRA_FIELD.optionLabelEn, label);
+  }
+
+  if (montoRaw) {
+    out.set(SORTEO_COMPRA_FIELD.snapMonto, montoRaw);
+    const parsed = parseMoneyPy(montoRaw);
+    if (parsed != null && parsed > 0) {
+      const rounded = String(Math.round(parsed));
+      const pf = norm(out.get("precio_fuente"));
+      if (!pf) out.set("precio_fuente", "promo");
+      out.set(SORTEO_COMPRA_FIELD.monto, rounded);
+      out.set("monto_compra", rounded);
+      out.set("monto_promocional", rounded);
+      out.set("sorteo_monto_opcion", rounded);
+    }
+  }
+
+  if (promoNombre) {
+    out.set(SORTEO_COMPRA_FIELD.snapPromoNombre, promoNombre);
+    out.set(SORTEO_COMPRA_FIELD.promoNombre, promoNombre);
+  }
+
+  const resumenParts: string[] = [];
+  if (label) resumenParts.push(label);
+  if (qty != null) resumenParts.push(`${qty} boletos`);
+  if (montoRaw) resumenParts.push(`Gs ${montoRaw}`);
+  const resumen = resumenParts.join(" · ");
+  if (resumen) {
+    out.set(SORTEO_COMPRA_FIELD.snapResumen, resumen);
+    out.set(SORTEO_COMPRA_FIELD.resumenCompra, resumen);
+  }
+
+  if (qty == null) {
+    flowTrace("sorteo_commercial_contract_qty_unresolved", {
+      option_label: label || null,
+      option_value: norm(selected.option_value) || null,
+      payload_keys: op ? Object.keys(op).sort() : [],
+      event: "interactive_option_post_contract",
+    });
+  }
+
+  return [...out.entries()];
+}
+
+/** Copia snapshot → claves de trabajo si el flujo dejó huecos (p. ej. tras nodos intermedios). */
+function mergeSnapshotKeysIntoPrepared(data: Record<string, string>): Record<string, string> {
+  const d = { ...data };
+  const sq = norm(d[SORTEO_COMPRA_FIELD.snapCantidad]);
+  if (sq) {
+    if (!norm(d[SORTEO_COMPRA_FIELD.cantidad])) d[SORTEO_COMPRA_FIELD.cantidad] = sq;
+    if (!norm(d.cantidad_boletos)) d.cantidad_boletos = sq;
+    if (!norm(d.sorteo_cantidad_opcion)) d.sorteo_cantidad_opcion = sq;
+  }
+  const sl = norm(d[SORTEO_COMPRA_FIELD.snapOpcionLabel]);
+  if (sl) {
+    if (!norm(d[SORTEO_COMPRA_FIELD.optionLabelEs])) d[SORTEO_COMPRA_FIELD.optionLabelEs] = sl;
+    if (!norm(d[SORTEO_COMPRA_FIELD.optionLabelEn])) d[SORTEO_COMPRA_FIELD.optionLabelEn] = sl;
+  }
+  const sm = norm(d[SORTEO_COMPRA_FIELD.snapMonto]);
+  if (sm) {
+    const parsed = parseMoneyPy(sm);
+    if (parsed != null && parsed > 0) {
+      const rounded = String(Math.round(parsed));
+      if (!norm(d.precio_fuente)) d.precio_fuente = "promo";
+      if (!norm(d[SORTEO_COMPRA_FIELD.monto])) d[SORTEO_COMPRA_FIELD.monto] = rounded;
+      if (!norm(d.monto_compra)) d.monto_compra = rounded;
+      if (!norm(d.sorteo_monto_opcion)) d.sorteo_monto_opcion = rounded;
+    }
+  }
+  const sp = norm(d[SORTEO_COMPRA_FIELD.snapPromoNombre]);
+  if (sp && !norm(d[SORTEO_COMPRA_FIELD.promoNombre])) d[SORTEO_COMPRA_FIELD.promoNombre] = sp;
+  const sr = norm(d[SORTEO_COMPRA_FIELD.snapResumen]);
+  if (sr && !norm(d[SORTEO_COMPRA_FIELD.resumenCompra])) d[SORTEO_COMPRA_FIELD.resumenCompra] = sr;
+  return d;
+}
+
+/**
  * Motivo legible cuando `parseSorteoParticipantFromFlowData` devuelve null (diagnóstico en logs).
  */
 export function explainParseSorteoParticipantFailure(data: Record<string, string>): string {
-  const qtyKeys = ["sorteo_cantidad_opcion", "cantidad_boletos", "cantidad", "boletos", "qty"] as const;
+  const qtyKeys = [
+    SORTEO_COMPRA_FIELD.snapCantidad,
+    "sorteo_cantidad_opcion",
+    "cantidad_boletos",
+    SORTEO_COMPRA_FIELD.cantidad,
+    "boletos",
+    "qty",
+  ] as const;
   let foundKey: string | undefined;
   let rawVal: string | undefined;
   let qtyValid = false;
@@ -37,7 +282,16 @@ export function explainParseSorteoParticipantFailure(data: Record<string, string
     }
   }
   if (!qtyValid) {
-    for (const k of ["producto", "opcion_label", "combo", "opcion", "descripcion"] as const) {
+    for (const k of [
+      "sorteo_snap_resumen",
+      SORTEO_COMPRA_FIELD.resumenCompra,
+      "producto",
+      "opcion_label",
+      "option_label",
+      "combo",
+      "opcion",
+      "descripcion",
+    ] as const) {
       const q = extractQtyFromFlowText(data[k]);
       if (q != null) {
         qtyValid = true;
@@ -101,14 +355,30 @@ export function expandFlowDataCanonicalKeys(data: Record<string, string>): Recor
 }
 
 function flowDataHasResolvableQty(data: Record<string, string>): boolean {
-  const qtyKeys = ["sorteo_cantidad_opcion", "cantidad_boletos", "cantidad", "boletos", "qty"] as const;
+  const qtyKeys = [
+    SORTEO_COMPRA_FIELD.snapCantidad,
+    "sorteo_cantidad_opcion",
+    "cantidad_boletos",
+    SORTEO_COMPRA_FIELD.cantidad,
+    "boletos",
+    "qty",
+  ] as const;
   for (const k of qtyKeys) {
     const v = norm(data[k]);
     if (!v) continue;
     const n = Number(v);
     if (Number.isFinite(n) && n >= 1) return true;
   }
-  for (const k of ["producto", "opcion_label", "combo", "opcion", "descripcion"] as const) {
+  for (const k of [
+    "sorteo_snap_resumen",
+    SORTEO_COMPRA_FIELD.resumenCompra,
+    "producto",
+    "opcion_label",
+    "option_label",
+    "combo",
+    "opcion",
+    "descripcion",
+  ] as const) {
     if (extractQtyFromFlowText(data[k]) != null) return true;
   }
   return false;
@@ -120,11 +390,21 @@ function flowDataHasResolvableQty(data: Record<string, string>): boolean {
 export function enrichFlowDataForSorteoParse(data: Record<string, string>): Record<string, string> {
   if (flowDataHasResolvableQty(data)) return data;
   const out = { ...data };
-  for (const k of ["opcion_label", "producto", "combo", "opcion", "descripcion"] as const) {
+  for (const k of [
+    "sorteo_snap_resumen",
+    SORTEO_COMPRA_FIELD.resumenCompra,
+    "opcion_label",
+    "option_label",
+    "producto",
+    "combo",
+    "opcion",
+    "descripcion",
+  ] as const) {
     const q = extractQtyFromFlowText(out[k]);
     if (q != null) {
       out["sorteo_cantidad_opcion"] = String(q);
-      out["cantidad"] = String(q);
+      out[SORTEO_COMPRA_FIELD.cantidad] = String(q);
+      out[SORTEO_COMPRA_FIELD.snapCantidad] = String(q);
       break;
     }
   }
@@ -132,7 +412,11 @@ export function enrichFlowDataForSorteoParse(data: Record<string, string>): Reco
 }
 
 export function prepareFlowDataForSorteoOrder(data: Record<string, string>): Record<string, string> {
-  return enrichFlowDataForSorteoParse(expandFlowDataCanonicalKeys(data));
+  let d = expandFlowDataCanonicalKeys({ ...data });
+  d = mergeSnapshotKeysIntoPrepared(d);
+  d = enrichFlowDataForSorteoParse(d);
+  d = mergeSnapshotKeysIntoPrepared(d);
+  return d;
 }
 
 /**
@@ -144,7 +428,14 @@ export function parseSorteoParticipantFromFlowData(data: Record<string, string>)
   ciudad: string;
   cantidad_boletos: number;
 } | null {
-  const qtyKeys = ["sorteo_cantidad_opcion", "cantidad_boletos", "cantidad", "boletos", "qty"];
+  const qtyKeys = [
+    SORTEO_COMPRA_FIELD.snapCantidad,
+    "sorteo_cantidad_opcion",
+    "cantidad_boletos",
+    SORTEO_COMPRA_FIELD.cantidad,
+    "boletos",
+    "qty",
+  ];
   let qty = NaN;
   for (const k of qtyKeys) {
     const v = norm(data[k]);
@@ -156,7 +447,16 @@ export function parseSorteoParticipantFromFlowData(data: Record<string, string>)
     }
   }
   if (!Number.isFinite(qty) || qty < 1) {
-    for (const k of ["producto", "opcion_label", "combo", "opcion", "descripcion"]) {
+    for (const k of [
+      "sorteo_snap_resumen",
+      SORTEO_COMPRA_FIELD.resumenCompra,
+      "producto",
+      "opcion_label",
+      "option_label",
+      "combo",
+      "opcion",
+      "descripcion",
+    ]) {
       const q = extractQtyFromFlowText(data[k]);
       if (q != null) {
         qty = q;
@@ -214,7 +514,12 @@ export function parseSorteoPricingFromFlowData(data: Record<string, string>): {
 } {
   const pf = norm(data["precio_fuente"]).toLowerCase();
   let montoCompra =
-    parseFirstMoney(data, ["sorteo_monto_opcion", "monto_compra", "monto_promocional"]) ??
+    parseFirstMoney(data, [
+      SORTEO_COMPRA_FIELD.snapMonto,
+      "sorteo_monto_opcion",
+      "monto_compra",
+      "monto_promocional",
+    ]) ??
     null;
   if (montoCompra == null && pf === "promo") {
     montoCompra = parseFirstMoney(data, ["monto"]);

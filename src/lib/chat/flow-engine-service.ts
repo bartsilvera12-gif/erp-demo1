@@ -8,6 +8,7 @@ import type { SupabaseAdmin } from "@/lib/chat/types";
 import { normalizeWaPhone } from "@/lib/chat/whatsapp-webhook-service";
 import { ensureActiveFlowSessionForConversation } from "@/lib/chat/flow-session-service";
 import {
+  applySorteoInteractiveCommercialContract,
   buildChatFlowDataUpsertsForSorteoOrder,
   buildSorteoOrderFlowVarOverrides,
   ensureSorteoOrderFromChat,
@@ -161,7 +162,7 @@ function augmentCantidadFromInteractiveOption(
   selected: FlowOption
 ): [string, string][] {
   const lowerKeys = new Set(entries.map(([k]) => k.trim().toLowerCase()));
-  const qtyNames = ["cantidad", "cantidad_boletos", "boletos", "qty"];
+  const qtyNames = ["cantidad", "cantidad_boletos", "boletos", "qty", "quantity"];
   const withCantidadSnapshot = (list: [string, string][], qty: string): [string, string][] => {
     const lk = new Set(list.map(([k]) => k.trim().toLowerCase()));
     if (lk.has("sorteo_cantidad_opcion")) return list;
@@ -1361,6 +1362,11 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     payloadEntries = augmentCantidadFromInteractiveOption(payloadEntries, selected);
     payloadEntries = augmentSorteoPricingFromInteractiveOption(payloadEntries);
     payloadEntries = dedupeChatFlowFieldEntries(payloadEntries);
+    payloadEntries = applySorteoInteractiveCommercialContract(payloadEntries, {
+      label: selected.label,
+      option_value: selected.option_value,
+      option_payload: selected.option_payload,
+    });
     if (payloadEntries.length > 0 && state.flow_code) {
       const upserts = payloadEntries.map(([fieldName, fieldValue]) => ({
         empresa_id: state.empresa_id,
