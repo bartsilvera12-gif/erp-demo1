@@ -132,12 +132,43 @@ export async function POST(req: Request) {
       estado: "activo" as const,
     };
 
+    let targetId: string;
+
     if (existente?.id) {
       const { error: upErr } = await supabase.from("usuarios").update(payload).eq("id", existente.id);
       if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+      targetId = existente.id;
     } else {
-      const { error: insErr } = await supabase.from("usuarios").insert([payload]);
+      const { data: inserted, error: insErr } = await supabase
+        .from("usuarios")
+        .insert([payload])
+        .select("id")
+        .single();
       if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
+      if (!inserted?.id) {
+        return NextResponse.json({ error: "No se pudo obtener el id del usuario creado." }, { status: 500 });
+      }
+      targetId = inserted.id as string;
+    }
+
+    await supabase.from("usuario_modulos").delete().eq("usuario_id", targetId);
+    const { data: emActivos } = await supabase
+      .from("empresa_modulos")
+      .select("modulo_id")
+      .eq("empresa_id", empresaId)
+      .eq("activo", true);
+    if (emActivos && emActivos.length > 0) {
+      const umRows = emActivos.map((r) => ({
+        usuario_id: targetId,
+        modulo_id: r.modulo_id as string,
+      }));
+      const { error: errUm } = await supabase.from("usuario_modulos").insert(umRows);
+      if (errUm) {
+        return NextResponse.json(
+          { error: `Usuario guardado pero error al asignar módulos: ${errUm.message}` },
+          { status: 400 }
+        );
+      }
     }
 
     return NextResponse.json({

@@ -131,10 +131,8 @@ export async function PATCH(
 
     // 2. Actualizar módulos habilitados
     if (Array.isArray(modulo_ids)) {
-      // Eliminar todos los actuales
       await supabase.from("empresa_modulos").delete().eq("empresa_id", id);
 
-      // Insertar los nuevos
       if (modulo_ids.length > 0) {
         const rows = modulo_ids.map((modulo_id: string) => ({
           empresa_id: id,
@@ -147,6 +145,21 @@ export async function PATCH(
             { error: `Empresa actualizada pero error en módulos: ${errMod.message}` },
             { status: 400 }
           );
+        }
+      }
+
+      const allowed = new Set(modulo_ids);
+      const { data: userRows } = await supabase.from("usuarios").select("id").eq("empresa_id", id);
+      const uids = (userRows ?? []).map((r) => r.id as string);
+      if (uids.length > 0) {
+        const { data: ums } = await supabase
+          .from("usuario_modulos")
+          .select("id, modulo_id")
+          .in("usuario_id", uids);
+        for (const row of ums ?? []) {
+          if (!allowed.has(row.modulo_id as string)) {
+            await supabase.from("usuario_modulos").delete().eq("id", row.id as string);
+          }
         }
       }
     }

@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
+import { filterModuloIdsForEmpresa } from "@/lib/modulos/resolve-effective-modules";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getAuthUserId(supabase: any, usuario: { auth_user_id?: string | null; email?: string }): Promise<string | null> {
@@ -68,8 +69,42 @@ export async function GET(
       return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     }
 
+    let modulo_ids: string[] = [];
+    let modulos_empresa: { id: string; nombre: string; slug: string }[] = [];
+
+    if (usuario.empresa_id) {
+      const { data: emData } = await supabase
+        .from("empresa_modulos")
+        .select("modulo_id")
+        .eq("empresa_id", usuario.empresa_id)
+        .eq("activo", true);
+      const mids = (emData ?? []).map((r) => r.modulo_id as string).filter(Boolean);
+      if (mids.length > 0) {
+        const { data: modRows } = await supabase
+          .from("modulos")
+          .select("id, nombre, slug")
+          .in("id", mids)
+          .order("slug");
+        modulos_empresa = (modRows ?? []).map((m) => ({
+          id: m.id as string,
+          nombre: (m.nombre as string) ?? "",
+          slug: (m.slug as string) ?? "",
+        }));
+      }
+
+      const { data: umData } = await supabase
+        .from("usuario_modulos")
+        .select("modulo_id")
+        .eq("usuario_id", id);
+      modulo_ids = (umData ?? []).map((r) => (r as { modulo_id: string }).modulo_id);
+    }
+
+    const puede_editar_modulos =
+      (currentUser?.rol ?? "").trim() === "super_admin" ||
+      ["admin", "administrador"].includes((currentUser?.rol ?? "").trim());
+
     const { empresa_id: _e, ...rest } = usuario;
-    return NextResponse.json(rest);
+    return NextResponse.json({ ...rest, modulo_ids, modulos_empresa, puede_editar_modulos });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Error";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -111,7 +146,7 @@ export async function PATCH(
       .single();
 
     const body = await req.json();
-    const { nombre, email, telefono, fecha_nacimiento, estado } = body;
+    const { nombre, email, telefono, fecha_nacimiento, estado, modulo_ids } = body;
 
     const { data: usuario, error: errGet } = await supabase
       .from("usuarios")
@@ -125,6 +160,14 @@ export async function PATCH(
 
     if (currentUser?.rol !== "super_admin" && usuario.empresa_id !== currentUser?.empresa_id) {
       return NextResponse.json({ error: "Sin permiso para editar este usuario" }, { status: 403 });
+    }
+
+    const rolEditor = (currentUser?.rol ?? "").trim();
+    const puedeModulos =
+      rolEditor === "super_admin" || ["admin", "administrador"].includes(rolEditor);
+
+    if (Array.isArray(modulo_ids) && !puedeModulos) {
+      return NextResponse.json({ error: "Sin permiso para asignar módulos" }, { status: 403 });
     }
 
     const authUserId = await getAuthUserId(supabase, usuario);
@@ -167,6 +210,21 @@ export async function PATCH(
       const { error: errUpdate } = await supabase.from("usuarios").update(updates).eq("id", id);
       if (errUpdate) {
         return NextResponse.json({ error: errUpdate.message }, { status: 400 });
+      }
+    }
+
+    if (Array.isArray(modulo_ids) && usuario.empresa_id) {
+      const validIds = await filterModuloIdsForEmpresa(supabase, usuario.empresa_id, modulo_ids);
+      const { error: errDel } = await supabase.from("usuario_modulos").delete().eq("usuario_id", id);
+      if (errDel) {
+        return NextResponse.json({ error: errDel.message }, { status: 400 });
+      }
+      if (validIds.length > 0) {
+        const rows = validIds.map((modulo_id: string) => ({ usuario_id: id, modulo_id }));
+        const { error: errIns } = await supabase.from("usuario_modulos").insert(rows);
+        if (errIns) {
+          return NextResponse.json({ error: errIns.message }, { status: 400 });
+        }
       }
     }
 

@@ -79,16 +79,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: errUsuario.message }, { status: 400 });
     }
 
-    // 4 — Módulos: el trigger en empresas ya insertó "conversaciones"; completar el resto sin duplicar
-    let moduloIds = [...new Set(Array.isArray(modulo_ids) ? modulo_ids : [])];
-    const { data: modConversaciones } = await supabase
-      .from("modulos")
-      .select("id")
-      .eq("slug", "conversaciones")
-      .maybeSingle();
-    if (modConversaciones?.id && !moduloIds.includes(modConversaciones.id)) {
-      moduloIds.push(modConversaciones.id);
-    }
+    const moduloIds = [...new Set(Array.isArray(modulo_ids) ? modulo_ids : [])];
 
     const { data: emExistentes } = await supabase
       .from("empresa_modulos")
@@ -107,6 +98,33 @@ export async function POST(req: Request) {
       if (errModulos) {
         return NextResponse.json(
           { error: `Empresa creada pero error en módulos: ${errModulos.message}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    const { data: adminRow } = await supabase
+      .from("usuarios")
+      .select("id")
+      .eq("empresa_id", empresaId)
+      .eq("email", email.trim().toLowerCase())
+      .single();
+
+    const { data: activosEmpresa } = await supabase
+      .from("empresa_modulos")
+      .select("modulo_id")
+      .eq("empresa_id", empresaId)
+      .eq("activo", true);
+
+    if (adminRow?.id && activosEmpresa && activosEmpresa.length > 0) {
+      const umRows = activosEmpresa.map((r) => ({
+        usuario_id: adminRow.id,
+        modulo_id: r.modulo_id as string,
+      }));
+      const { error: errUm } = await supabase.from("usuario_modulos").insert(umRows);
+      if (errUm) {
+        return NextResponse.json(
+          { error: `Empresa creada pero error al asignar módulos al administrador: ${errUm.message}` },
           { status: 400 }
         );
       }

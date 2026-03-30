@@ -20,6 +20,8 @@ function SectionCard({ title, icon, children }: { title: string; icon: string; c
   );
 }
 
+type ModuloOpt = { id: string; nombre: string; slug: string };
+
 type Usuario = {
   id: string;
   nombre: string | null;
@@ -29,6 +31,9 @@ type Usuario = {
   rol: string | null;
   estado: string | null;
   created_at: string;
+  modulo_ids?: string[];
+  modulos_empresa?: ModuloOpt[];
+  puede_editar_modulos?: boolean;
 };
 
 function UsuarioDetailContent() {
@@ -51,6 +56,7 @@ function UsuarioDetailContent() {
     telefono: "",
     fecha_nacimiento: "",
     estado: "activo" as "activo" | "inactivo",
+    modulo_ids: [] as string[],
   });
 
   useEffect(() => {
@@ -71,6 +77,7 @@ function UsuarioDetailContent() {
           telefono: u.telefono ?? "",
           fecha_nacimiento: u.fecha_nacimiento ? u.fecha_nacimiento.slice(0, 10) : "",
           estado: (u.estado as "activo" | "inactivo") ?? "activo",
+          modulo_ids: u.modulo_ids ?? [],
         });
       })
       .catch((err) => {
@@ -79,7 +86,16 @@ function UsuarioDetailContent() {
   }, [id]);
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
-    const { name, value } = e.target;
+    const { name, value, type } = e.target;
+    if (type === "checkbox" && name.startsWith("modulo_")) {
+      const id = (e.target as HTMLInputElement).value;
+      const checked = (e.target as HTMLInputElement).checked;
+      setForm((prev) => ({
+        ...prev,
+        modulo_ids: checked ? [...prev.modulo_ids, id] : prev.modulo_ids.filter((m) => m !== id),
+      }));
+      return;
+    }
     setForm((prev) => ({
       ...prev,
       [name]: name === "email" ? value.toLowerCase() : name === "nombre" ? value.toUpperCase() : value,
@@ -102,16 +118,21 @@ function UsuarioDetailContent() {
 
     setGuardando(true);
     try {
+      const body: Record<string, unknown> = {
+        nombre: form.nombre.trim(),
+        email: form.email.trim().toLowerCase(),
+        telefono: form.telefono.trim() || undefined,
+        fecha_nacimiento: form.fecha_nacimiento || undefined,
+        estado: form.estado,
+      };
+      if (usuario.puede_editar_modulos) {
+        body.modulo_ids = form.modulo_ids;
+      }
+
       const res = await fetch(`/api/empresas/usuarios/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nombre: form.nombre.trim(),
-          email: form.email.trim().toLowerCase(),
-          telefono: form.telefono.trim() || undefined,
-          fecha_nacimiento: form.fecha_nacimiento || undefined,
-          estado: form.estado,
-        }),
+        body: JSON.stringify(body),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -124,6 +145,7 @@ function UsuarioDetailContent() {
         telefono: form.telefono.trim() || null,
         fecha_nacimiento: form.fecha_nacimiento || null,
         estado: form.estado,
+        modulo_ids: usuario.puede_editar_modulos ? [...form.modulo_ids] : usuario.modulo_ids,
       });
       setEditing(false);
       setSuccessMessage("Cambios guardados correctamente en la base de datos.");
@@ -245,6 +267,29 @@ function UsuarioDetailContent() {
               ))}
             </div>
           </SectionCard>
+
+          {(usuario.modulos_empresa?.length ?? 0) > 0 && (
+            <SectionCard title="Módulos del usuario" icon="📦">
+              <p className="text-xs text-gray-500 mb-3">
+                Solo se listan módulos habilitados para la empresa. El acceso efectivo es la intersección con lo asignado a este usuario.
+              </p>
+              <ul className="flex flex-wrap gap-2">
+                {(usuario.modulos_empresa ?? [])
+                  .filter((m) => (usuario.modulo_ids ?? []).includes(m.id))
+                  .map((m) => (
+                    <li
+                      key={m.id}
+                      className="text-sm font-medium px-3 py-1 rounded-full bg-slate-100 text-slate-800 border border-slate-200"
+                    >
+                      {m.nombre}
+                    </li>
+                  ))}
+              </ul>
+              {(usuario.modulo_ids ?? []).length === 0 && (
+                <p className="text-sm text-amber-700 mt-2">Sin módulos asignados (solo verá el inicio hasta que un administrador asigne módulos).</p>
+              )}
+            </SectionCard>
+          )}
         </div>
       )}
 
@@ -307,6 +352,33 @@ function UsuarioDetailContent() {
               </div>
             </div>
           </SectionCard>
+
+          {usuario.puede_editar_modulos && (usuario.modulos_empresa?.length ?? 0) > 0 && (
+            <SectionCard title="Módulos del usuario" icon="📦">
+              <p className="text-xs text-gray-500 mb-4">
+                Marcá solo los módulos que esta persona puede usar. La lista muestra únicamente lo habilitado para tu empresa.
+              </p>
+              <div className="space-y-2">
+                {(usuario.modulos_empresa ?? []).map((m) => (
+                  <label
+                    key={m.id}
+                    className="flex items-center gap-3 rounded-lg border border-gray-100 px-3 py-2.5 cursor-pointer hover:bg-gray-50"
+                  >
+                    <input
+                      type="checkbox"
+                      name={`modulo_${m.id}`}
+                      value={m.id}
+                      checked={form.modulo_ids.includes(m.id)}
+                      onChange={handleChange}
+                      className="rounded border-gray-300 text-gray-900 focus:ring-gray-900/20"
+                    />
+                    <span className="text-sm font-medium text-gray-800">{m.nombre}</span>
+                    <span className="text-xs text-gray-400 ml-auto font-mono">{m.slug}</span>
+                  </label>
+                ))}
+              </div>
+            </SectionCard>
+          )}
 
           <div className="flex items-center gap-3">
             <button

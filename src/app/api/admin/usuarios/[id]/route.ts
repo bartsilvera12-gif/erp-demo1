@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { filterModuloIdsForEmpresa } from "@/lib/modulos/resolve-effective-modules";
 
 function getSupabase() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -60,7 +61,7 @@ export async function PATCH(
 
     const { data: usuario, error: errGet } = await supabase
       .from("usuarios")
-      .select("id, email, nombre, estado, auth_user_id")
+      .select("id, email, nombre, estado, auth_user_id, empresa_id")
       .eq("id", id)
       .single();
 
@@ -117,12 +118,19 @@ export async function PATCH(
     }
 
     if (Array.isArray(modulo_ids)) {
+      if (!usuario.empresa_id) {
+        return NextResponse.json(
+          { error: "El usuario no tiene empresa; no se pueden asignar módulos." },
+          { status: 400 }
+        );
+      }
+      const validIds = await filterModuloIdsForEmpresa(supabase, usuario.empresa_id, modulo_ids);
       const { error: errDel } = await supabase.from("usuario_modulos").delete().eq("usuario_id", id);
       if (errDel) {
         return NextResponse.json({ error: `Error al guardar módulos. Ejecutá las migraciones: ${errDel.message}` }, { status: 400 });
       }
-      if (modulo_ids.length > 0) {
-        const rows = modulo_ids.map((modulo_id: string) => ({ usuario_id: id, modulo_id }));
+      if (validIds.length > 0) {
+        const rows = validIds.map((modulo_id: string) => ({ usuario_id: id, modulo_id }));
         const { error: errMod } = await supabase.from("usuario_modulos").insert(rows);
         if (errMod) {
           return NextResponse.json({ error: `Error al guardar módulos: ${errMod.message}` }, { status: 400 });

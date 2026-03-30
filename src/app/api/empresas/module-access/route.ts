@@ -4,6 +4,10 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { resolveEffectiveModules } from "@/lib/modulos/resolve-effective-modules";
 
+/**
+ * Slugs de módulos efectivos para el usuario autenticado (intersección empresa ∩ usuario).
+ * super_admin → todos los slugs del catálogo.
+ */
 export async function GET() {
   try {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -46,7 +50,7 @@ export async function GET() {
       .single();
 
     if (errUsuario || !usuario) {
-      return NextResponse.json([]);
+      return NextResponse.json({ superAdmin: false, slugs: [] });
     }
 
     const modulos = await resolveEffectiveModules(supabase, {
@@ -55,13 +59,12 @@ export async function GET() {
       rol: usuario.rol,
     });
 
-    return NextResponse.json(
-      modulos.map((m) => ({
-        id: m.id,
-        nombre: m.nombre,
-        slug: m.slug,
-      }))
-    );
+    const superAdmin = (usuario.rol ?? "").trim() === "super_admin";
+
+    return NextResponse.json({
+      superAdmin,
+      slugs: modulos.map((m) => m.slug).filter(Boolean),
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "Error";
     return NextResponse.json({ error: msg }, { status: 500 });
