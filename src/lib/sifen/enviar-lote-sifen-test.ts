@@ -11,8 +11,7 @@ import { URL } from "node:url";
 import JSZip from "jszip";
 import type { AmbienteSifen } from "./types";
 import { extractKeyAndCertFromP12 } from "./sign-xml";
-import { buildSifenSiRecepDeV150SchemaLocation, SIFEN_EKUATIA_TARGET_NS } from "./sifen-xsi-schema-location";
-import { escapeXml } from "./xml";
+import { SIFEN_EKUATIA_TARGET_NS } from "./sifen-xsi-schema-location";
 
 /**
  * Nombre del archivo dentro del ZIP enviado en xDE.
@@ -22,9 +21,6 @@ const NOMBRE_XML_DENTRO_ZIP = "xml_file.xml";
 
 const SIFEN_NS = SIFEN_EKUATIA_TARGET_NS;
 const SOAP_ENV = "http://www.w3.org/2003/05/soap-envelope";
-const XMLNS_XSI = "http://www.w3.org/2001/XMLSchema-instance";
-/** Raíz `xml_file.xml` en el ZIP: mismo schemaLocation absoluto que el rDE interno. */
-const RLOTE_DE_SCHEMA_LOCATION = buildSifenSiRecepDeV150SchemaLocation();
 
 /**
  * URL del servicio TEST (misma que documentan DNIT / pysifen: `recibe-lote.wsdl`).
@@ -48,8 +44,7 @@ export interface EnviarLoteSifenTestParams {
   /** Identificador de control de envío (dId). Si no se indica, se genera. */
   dId?: number;
   /**
-   * Si true, envuelve el XML firmado en `<rLoteDE xmlns="...">...</rLoteDE>` con `<?xml encoding="UTF-8"?>`.
-   * El endpoint `enviar-test` lo activa; sin envoltorio se envía solo `<rDE>...</rDE>` (sin prolog), lo que a veces provoca 0160 en SET.
+   * Si true, envuelve el firmado en `rLoteDE` dentro de `xml_file.xml` (ZIP), alineado a facturacionelectronicapy-setapi.
    */
   envoltorioRloteDe?: boolean;
 }
@@ -81,10 +76,8 @@ function stripXmlDeclaration(xml: string): string {
 
 function construirXmlLoteRloteDe(xmlFirmado: string): string {
   const inner = stripXmlDeclaration(xmlFirmado);
-  return (
-    `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<rLoteDE xmlns="${SIFEN_NS}" xmlns:xsi="${XMLNS_XSI}" xsi:schemaLocation="${escapeXml(RLOTE_DE_SCHEMA_LOCATION)}">\n${inner}\n</rLoteDE>\n`
-  );
+  /** `rLoteDE` sin xsi (el `rDE` interior ya trae xmlns e-kuatia). Misma idea que SET.js / ZIP oficial. */
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<rLoteDE>\n${inner}\n</rLoteDE>\n`;
 }
 
 function generarDId(): number {

@@ -5,6 +5,7 @@ import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
 import { decryptSecret } from "@/lib/sifen/security";
 import { enviarLoteSifenTest, type RecibeLoteRespuestaParsed } from "@/lib/sifen/enviar-lote-sifen-test";
+import { recibirDeSifenTestSync } from "@/lib/sifen/recibe-de-sifen-test";
 import { downloadSifenObject, SIFEN_STORAGE_BUCKET } from "@/lib/sifen/sifen-storage";
 import { downloadSifenCertificadoObject } from "@/lib/sifen/sifen-certificados-storage";
 import { toFacturaElectronicaDto } from "@/lib/sifen/to-factura-electronica-dto";
@@ -15,6 +16,14 @@ function getSupabase() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase no configurado");
   return createClient(url, key, { auth: { autoRefreshToken: false, persistSession: false } });
+}
+
+function decodificarEntidadesSoapBasicas(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(String(n), 10)))
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
 }
 
 function respuestaRecibeLoteJson(r: RecibeLoteRespuestaParsed): Record<string, unknown> {
@@ -219,10 +228,28 @@ export async function POST(
         "SET no encoló el lote (0301).";
       /** SET suele devolver dProtConsLote igual con 0301; hace falta para consulta-lote y ver el rechazo por CDC. */
       nuevoProt = protTrim.length > 0 ? protTrim : null;
-      nuevoError =
+      let detalleRecibeSync = "";
+      try {
+        const sync = await recibirDeSifenTestSync({
+          xmlFirmadoRde: xmlDl.data.toString("utf8"),
+          empresaConfig: {
+            ambiente: "test",
+            certificadoP12: p12Dl.data,
+            certificadoPassword: p12Password,
+          },
+        });
+        if (!sync.soapFault && sync.gResProc.length > 0) {
+          const g = sync.gResProc[0]!;
+          detalleRecibeSync = ` ${decodificarEntidadesSoapBasicas(`[${g.dCodRes}] ${g.dMsgRes}`)}`;
+        }
+      } catch {
+        /* recibe síncrono es solo ayuda diagnóstico */
+      }
+      const sufProt =
         nuevoProt != null
-          ? `${baseErr} — Use «Consultar lote TEST» con el protocolo ${nuevoProt} para el detalle por CDC.`
-          : baseErr;
+          ? ` — Use «Consultar lote TEST» con el protocolo ${nuevoProt} para más detalle si aplica.`
+          : "";
+      nuevoError = `${baseErr}${detalleRecibeSync ? `.${detalleRecibeSync}` : ""}${sufProt}`;
     } else {
       nuevoEstado = "error_envio";
       const code = resp.dCodRes?.trim() ?? "";

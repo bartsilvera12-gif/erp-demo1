@@ -1,10 +1,9 @@
 /**
- * CDC (atributo Id del tDE): 44 caracteres numéricos según esquema SIFEN v150.
- * Base de 43 dígitos + 1 dígito verificador (módulo 11, pesos 2–7 cíclicos de derecha a izquierda).
- * Referencia de estructura: muestra oficial kmee/sifen (factura_electronica.xml).
+ * CDC (atributo Id del DE): 44 dígitos según conformación SET / facturacionelectronicapy-xmlgen
+ * (`jsonDteAlgoritmos.generateCodigoControl`).
+ *
+ * Orden base (43) + dígito verificador módulo 11 (pesos 2→11 desde la derecha, reinicio en 2).
  */
-import { createHash } from "node:crypto";
-
 const I_TI_DE_FE = "01"; // Factura electrónica (iTiDE=1, 2 dígitos)
 
 export function padDigits(value: string | number, len: number): string {
@@ -61,60 +60,69 @@ export function splitRucParaXml(rucRaw: string): { cuerpo: string; dDV: string }
   return { cuerpo, dDV };
 }
 
-/** 11 dígitos pseudoaleatorios para completar la base CDC (43 = 32 fijos + 11). */
-export function onceDigitosAleatorios(): string {
-  const h = createHash("sha256").update(`${Date.now()}-${Math.random()}-${process.hrtime.bigint()}`).digest("hex");
-  let n = "";
-  for (let i = 0; i < h.length && n.length < 11; i++) {
-    const c = h[i]!;
-    const v = parseInt(c, 16);
-    n += String(v % 10);
+/**
+ * DV del CDC (módulo 11, igual `jsonDteAlgoritmos.calcularDigitoVerificador` TIPS, baseMax 11).
+ */
+export function digitoVerificadorModulo11CdcSet(base43: string): string {
+  if (!/^\d{43}$/.test(base43)) {
+    throw new Error(`La base CDC debe tener 43 dígitos numéricos; recibido ${base43.length}`);
   }
-  return n.padStart(11, "0").slice(-11);
+  let k = 2;
+  let v_total = 0;
+  for (let i = base43.length; i > 0; i--) {
+    if (k > 11) k = 2;
+    const v_numero_aux = parseInt(base43.substring(i - 1, i), 10);
+    v_total += v_numero_aux * k;
+    k += 1;
+  }
+  const v_resto = v_total % 11;
+  const v_digit = v_resto > 1 ? 11 - v_resto : 0;
+  return String(v_digit);
 }
 
+/** @deprecated Usar `digitoVerificadorModulo11CdcSet` (pesos 2–7 cíclicos no coinciden con SET). */
 export function digitoVerificadorModulo11Base43(base43: string): string {
-  if (!/^\d{43}$/.test(base43)) {
-    throw new Error(`La base CDC debe tener 43 dígitos; recibido ${base43.length}`);
-  }
-  const pesos = [2, 3, 4, 5, 6, 7];
-  let sum = 0;
-  for (let i = base43.length - 1, p = 0; i >= 0; i--, p++) {
-    sum += parseInt(base43[i]!, 10) * pesos[p % 6]!;
-  }
-  const r = sum % 11;
-  return String(r < 2 ? 0 : 11 - r);
+  return digitoVerificadorModulo11CdcSet(base43);
 }
 
 export interface CdcFacturaElectronicaInput {
-  iTiDE: string; // "1" normalmente
+  iTiDE: string;
   dRucEm: string;
   dDVEmi: string;
   dEst: string;
   dPunExp: string;
-  dNumDoc: string;
-  /** AAAAMMDD */
+  numeroFactura: string;
+  /** AAAAMMDD (misma fecha calendario que `dFeEmiDE`) */
   fechaEmision: string;
+  /** gEmis.iTipCont */
+  iTipContEmisor: string;
+  /** gOpeDE.iTipEmi (1 = normal) */
+  iTipEmi: string;
+  /** gOpeDE.dCodSeg (9 dígitos), ya calculado */
+  dCodSeg: string;
 }
 
 /**
- * Arma los 43 dígitos previos al DV y devuelve CDC completo (44) + DV suelto (igual al último dígito del CDC).
+ * Arma la base de 43 dígitos y el CDC de 44 (incluye DV).
  */
 export function generarCdcFacturaElectronica(inp: CdcFacturaElectronicaInput): { cdc: string; dDVId: string; base43: string } {
-  const iTiDep = padDigits(inp.iTiDE.replace(/\D/g, ""), 2);
+  const tipoDoc = padDigits(inp.iTiDE.replace(/\D/g, ""), 2);
   const ruc = padDigits(inp.dRucEm.replace(/\D/g, ""), 8);
   const dvE = inp.dDVEmi.replace(/\D/g, "").slice(-1) || "0";
   const est = normalizarCodigoTres(inp.dEst);
   const pe = normalizarCodigoTres(inp.dPunExp);
-  const nd = normalizarNumeroDocumentoSifen(inp.dNumDoc);
+  const nd = normalizarNumeroDocumentoSifen(inp.numeroFactura);
   const f = inp.fechaEmision.replace(/\D/g, "");
   if (f.length !== 8) throw new Error(`fechaEmision CDC debe ser AAAAMMDD (8 dígitos): ${inp.fechaEmision}`);
-  const suf = onceDigitosAleatorios();
-  const base43 = `${iTiDep}${ruc}${dvE}${est}${pe}${nd}${f}${suf}`;
+  const tipCont = padDigits(inp.iTipContEmisor.replace(/\D/g, ""), 1).slice(-1) || "1";
+  const tipEmi = padDigits(inp.iTipEmi.replace(/\D/g, ""), 1).slice(-1) || "1";
+  const codSeg = padDigits(inp.dCodSeg.replace(/\D/g, ""), 9).slice(-9);
+
+  const base43 = `${tipoDoc}${ruc}${dvE}${est}${pe}${nd}${tipCont}${f}${tipEmi}${codSeg}`;
   if (base43.length !== 43) {
     throw new Error(`Longitud base CDC inesperada: ${base43.length}`);
   }
-  const dv = digitoVerificadorModulo11Base43(base43);
+  const dv = digitoVerificadorModulo11CdcSet(base43);
   const cdc = `${base43}${dv}`;
   return { cdc, dDVId: dv, base43 };
 }

@@ -13,18 +13,18 @@ import * as forge from "node-forge";
 import { SignedXml } from "xml-crypto";
 import { createPrivateKey } from "node:crypto";
 import {
-  buildSifenSiRecepDeV150SchemaLocation,
   SIFEN_EKUATIA_TARGET_NS,
+  SIFEN_SIRECEP_DE_V150_XSD_FILE,
 } from "./sifen-xsi-schema-location";
 import { escapeXml } from "./xml";
 
 const SIFEN_NS = SIFEN_EKUATIA_TARGET_NS;
 const XMLNS_XSI = "http://www.w3.org/2001/XMLSchema-instance";
-const RDE_SCHEMA_LOCATION = buildSifenSiRecepDeV150SchemaLocation();
+const RDE_SCHEMA_LOC_REL = `${SIFEN_NS} ${SIFEN_SIRECEP_DE_V150_XSD_FILE}`;
 
 /**
- * Garantiza xmlns:xsi + xsi:schemaLocation en la etiqueta de apertura de `rDE` (SET 0160 si faltan).
- * xml-crypto suele preservarlos; esto cubre regresiones entre runtimes.
+ * Normaliza atributos de `rDE` tras firmar: `xsi:schemaLocation` con **archivo relativo** (SET 0160 si va URL https al XSD).
+ * El digest firmado es solo del nodo `DE`.
  */
 function ensureRdeRootSchemaAttrs(xml: string): string {
   const m = /^([\s\S]*?)(<rDE)(\s[^>]*)?>/i.exec(xml);
@@ -33,15 +33,17 @@ function ensureRdeRootSchemaAttrs(xml: string): string {
   const tag = m[2] ?? "<rDE";
   let rest = (m[3] ?? "").trimStart();
   if (!rest.startsWith(" ")) rest = rest ? ` ${rest}` : "";
-  const hasXsiNs = /\sxmlns:xsi\s*=/.test(rest);
-  const hasLoc = /\sxsi:schemaLocation\s*=/.test(rest);
+  rest = rest
+    .replace(/\s+xmlns:xsi\s*=\s*"[^"]*"/gi, "")
+    .replace(/\s+xsi:schemaLocation\s*=\s*"[^"]*"/gi, "")
+    .replace(/\s+xsi:schemaLocation\s*=\s*'[^']*'/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (rest.length > 0 && !rest.startsWith(" ")) rest = ` ${rest}`;
   const hasDefaultNs = /\sxmlns\s*=\s*"/.test(rest);
-  let add = "";
-  if (!hasDefaultNs) add += ` xmlns="${SIFEN_NS}"`;
-  if (!hasXsiNs) add += ` xmlns:xsi="${XMLNS_XSI}"`;
-  if (!hasLoc) add += ` xsi:schemaLocation="${escapeXml(RDE_SCHEMA_LOCATION)}"`;
-  if (!add) return xml;
-  const rebuilt = `${tag}${rest}${add}>`;
+  const base = hasDefaultNs ? rest : ` xmlns="${SIFEN_NS}"${rest}`;
+  const fixedRest = `${base} xmlns:xsi="${XMLNS_XSI}" xsi:schemaLocation="${escapeXml(RDE_SCHEMA_LOC_REL)}"`;
+  const rebuilt = `${tag}${fixedRest}>`;
   return before + rebuilt + xml.slice(m.index! + m[0].length);
 }
 

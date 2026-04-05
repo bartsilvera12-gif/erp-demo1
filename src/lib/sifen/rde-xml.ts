@@ -11,7 +11,7 @@ import {
   SIFEN_TEST_CSC_GENERICO,
   SIFEN_TEST_LITERAL_DOCUMENTO,
 } from "./sifen-ambiente-test";
-import { buildSifenSiRecepDeV150SchemaLocation, SIFEN_EKUATIA_TARGET_NS } from "./sifen-xsi-schema-location";
+import { SIFEN_EKUATIA_TARGET_NS, SIFEN_SIRECEP_DE_V150_XSD_FILE } from "./sifen-xsi-schema-location";
 import { escapeXml } from "./xml";
 import {
   fechaEmisionCdc,
@@ -25,7 +25,8 @@ import {
 
 const NS = SIFEN_EKUATIA_TARGET_NS;
 const XMLNS_XSI = "http://www.w3.org/2001/XMLSchema-instance";
-const RDE_SCHEMA_LOCATION = buildSifenSiRecepDeV150SchemaLocation();
+/** Par namespace + archivo relativo (sin https): SET TEST acepta esto; URL absoluta al .xsd provoca 0160. */
+const RDE_XSI_SCHEMA_LOCATION = `${NS} ${SIFEN_SIRECEP_DE_V150_XSD_FILE}`;
 
 /** Enumeraciones / literales exactos según DE_Types_v150.xsd (y catálogos referidos). */
 const XSD_DES_TI_DE_FACTURA = "Factura electrónica";
@@ -127,9 +128,9 @@ function dCodSegNueveDigitos(csc: string, semilla: string): string {
 }
 
 export interface BuildRdeXmlOptions {
-  /** Vigencia timbrado inicio YYYY-MM-DD (obligatorio en DE). */
+  /** Vigencia timbrado inicio YYYY-MM-DD → `gTimb.dFeIniT` (v150 no incluye `dFeFinT` en el XSD). */
   timbradoFechaInicio: string;
-  /** Vigencia timbrado fin YYYY-MM-DD → `gTimb.dFeFinT` cuando está definido. */
+  /** @deprecated v150: no se emite `dFeFinT` (no está en tgDTim del XSD; SET rechaza el nodo). */
   timbradoFechaFin?: string;
   /** Ambiente SIFEN de la empresa: en `test` aplican literales y CSC genérico del DE. */
   ambiente?: AmbienteSifen;
@@ -181,7 +182,9 @@ export function buildOfficialRdeFacturaElectronicaXml(
 
   let cscParaCodSeg: string;
   if (esAmbienteTest) {
-    cscParaCodSeg = SIFEN_TEST_CSC_GENERICO;
+    /** Si el timbrado de prueba tiene CSC en BD, SET valida CDC/dCodSeg contra ese valor; el genérico solo si no hay CSC. */
+    const cscCfg = emisor.csc == null ? "" : String(emisor.csc).trim();
+    cscParaCodSeg = cscCfg !== "" ? cscCfg : SIFEN_TEST_CSC_GENERICO;
   } else {
     const csc = emisor.csc;
     if (csc == null || String(csc).trim() === "") {
@@ -197,8 +200,11 @@ export function buildOfficialRdeFacturaElectronicaXml(
   const dPunExp = normalizarCodigoTres(emisor.punto_expedicion);
   const dNumDoc = normalizarNumeroDocumentoSifen(documento.numero_factura);
   const fechaCdc = fechaEmisionCdc(documento.fecha);
+  /** Debe coincidir con `gEmis.iTipCont` y entrar en el CDC antes de la fecha (SET / TIPS). */
+  const iTipContEmi = iTipContCodigo(emisor.razon_social);
 
-  const semillaSeg = `${base.sifen.factura_electronica_id}-${Date.now()}`;
+  /** Sin timestamp: mismo documento electrónico → mismo dCodSeg/CDC al regenerar XML (exigencia típica SET / trazabilidad). */
+  const semillaSeg = base.sifen.factura_electronica_id;
   const dCodSeg = dCodSegNueveDigitos(cscParaCodSeg, semillaSeg);
 
   const { cdc, dDVId } = generarCdcFacturaElectronica({
@@ -207,8 +213,11 @@ export function buildOfficialRdeFacturaElectronicaXml(
     dDVEmi,
     dEst,
     dPunExp,
-    dNumDoc,
+    numeroFactura: documento.numero_factura,
     fechaEmision: fechaCdc,
+    iTipContEmisor: iTipContEmi,
+    iTipEmi: "1",
+    dCodSeg,
   });
 
   const ahora = opts.fechaHoraEmision ?? new Date();
@@ -216,10 +225,6 @@ export function buildOfficialRdeFacturaElectronicaXml(
   const dFecFirma = dFeEmiDE;
 
   const dFeIniT = vigenciaIso(opts.timbradoFechaInicio);
-  const dFeFinT =
-    opts.timbradoFechaFin != null && String(opts.timbradoFechaFin).trim() !== ""
-      ? vigenciaIso(String(opts.timbradoFechaFin))
-      : null;
 
   const telEmi = opts.emisorTelefono.replace(/\D/g, "");
   if (telEmi.length < 8 || telEmi.length > 15) {
@@ -235,12 +240,11 @@ export function buildOfficialRdeFacturaElectronicaXml(
   const dActDes = (opts.actividadEconomicaDescripcion ?? "Comercio al por menor").trim();
 
   const dNomEmi = esAmbienteTest ? SIFEN_TEST_LITERAL_DOCUMENTO : emisor.razon_social.trim();
-  /** Tipo contribuyente emisor según razón social real (no el literal TEST de `dNomEmi`). */
-  const iTipContEmi = iTipContCodigo(emisor.razon_social);
 
   const gEmisParts: string[] = [
     "<gEmis>",
-    textEl("dRucEm", rucEmCuerpo),
+    /** Mismo relleno 8 dígitos que en el CDC; si no, SET TEST rechaza 1000. */
+    textEl("dRucEm", dRucEmCdc),
     textEl("dDVEmi", dDVEmi),
     textEl("iTipCont", iTipContEmi),
     textEl("dNomEmi", dNomEmi),
@@ -279,7 +283,7 @@ export function buildOfficialRdeFacturaElectronicaXml(
     recParts.push(textEl("cPaisRec", "PRY"));
     recParts.push(textEl("dDesPaisRe", "Paraguay"));
     recParts.push(textEl("iTiContRec", iTiContRec));
-    recParts.push(textEl("dRucRec", dRucRec));
+    recParts.push(textEl("dRucRec", padDigits(dRucRec, 8)));
     recParts.push(textEl("dDVRec", dDVRec));
     recParts.push(textEl("dNomRec", receptor.nombre.trim()));
     if (receptor.direccion?.trim()) recParts.push(textEl("dDirRec", receptor.direccion.trim()));
@@ -454,7 +458,6 @@ export function buildOfficialRdeFacturaElectronicaXml(
     textEl("dPunExp", dPunExp),
     textEl("dNumDoc", dNumDoc),
     textEl("dFeIniT", dFeIniT),
-    ...(dFeFinT != null ? [textEl("dFeFinT", dFeFinT)] : []),
     "</gTimb>",
     "<gDatGralOpe>",
     textEl("dFeEmiDE", dFeEmiDE),
@@ -484,7 +487,7 @@ export function buildOfficialRdeFacturaElectronicaXml(
 
   const xml =
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<rDE xmlns="${NS}" xmlns:xsi="${XMLNS_XSI}" xsi:schemaLocation="${escapeXml(RDE_SCHEMA_LOCATION)}">` +
+    `<rDE xmlns="${NS}" xmlns:xsi="${XMLNS_XSI}" xsi:schemaLocation="${escapeXml(RDE_XSI_SCHEMA_LOCATION)}">` +
     textEl("dVerFor", "150") +
     de +
     `</rDE>\n`;
