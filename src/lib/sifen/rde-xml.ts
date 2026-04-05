@@ -88,6 +88,30 @@ function descripcionAfectacion(tasa: 0 | 5 | 10): string {
   return XSD_DES_AFEC_GRAVADO;
 }
 
+/**
+ * `tiTipCont` / `iTiContRec`: 1 = persona física, 2 = persona jurídica (Manual Técnico SIFEN).
+ * El XSD no incluye `dDes` para estos códigos en `gEmis` / `gDatRec`.
+ * Heurística: forma societaria típica en denominación (PY) → jurídica; si no coincide → física.
+ */
+function esPersonaJuridicaSegunDenominacion(denominacion: string): boolean {
+  const u = denominacion.trim().toUpperCase();
+  if (!u) return false;
+  if (/\bS\.?\s*A\.?\b/.test(u)) return true;
+  if (/\bS\.?\s*R\.?\s*L\.?\b/.test(u)) return true;
+  if (/\bE\.?\s*A\.?\s*S\.?\b/.test(u)) return true;
+  if (/\bEAS\b/.test(u)) return true;
+  if (/\bLTDA\b/.test(u)) return true;
+  if (/\bS\.\s*EN\s*C\.?\b/.test(u) || /\bS\s+EN\s+C\b/.test(u)) return true;
+  if (/\bUNIPERSONAL\b/.test(u)) return true;
+  if (/\bCOOP(?:ERATIVA)?\b/.test(u)) return true;
+  if (/\bY\s+CIA\b/.test(u)) return true;
+  return false;
+}
+
+function iTipContCodigo(denominacion: string): "1" | "2" {
+  return esPersonaJuridicaSegunDenominacion(denominacion) ? "2" : "1";
+}
+
 function dCodSegNueveDigitos(csc: string, semilla: string): string {
   const h = createHash("sha256")
     .update(`${csc.trim()}|${semilla}`)
@@ -208,12 +232,14 @@ export function buildOfficialRdeFacturaElectronicaXml(
   const dActDes = (opts.actividadEconomicaDescripcion ?? "Comercio al por menor").trim();
 
   const dNomEmi = esAmbienteTest ? SIFEN_TEST_LITERAL_DOCUMENTO : emisor.razon_social.trim();
+  /** Tipo contribuyente emisor según razón social real (no el literal TEST de `dNomEmi`). */
+  const iTipContEmi = iTipContCodigo(emisor.razon_social);
 
   const gEmisParts: string[] = [
     "<gEmis>",
     textEl("dRucEm", rucEmCuerpo),
     textEl("dDVEmi", dDVEmi),
-    textEl("iTipCont", "1"),
+    textEl("iTipCont", iTipContEmi),
     textEl("dNomEmi", dNomEmi),
     textEl("dDirEmi", dirEmi),
     textEl("dNumCas", opts.emisorNumCasa),
@@ -244,11 +270,12 @@ export function buildOfficialRdeFacturaElectronicaXml(
   const recParts: string[] = ["<gDatRec>"];
   if (receptor.ruc?.trim()) {
     const { cuerpo: dRucRec, dDV: dDVRec } = splitRucParaXml(receptor.ruc.trim());
+    const iTiContRec = iTipContCodigo(receptor.nombre);
     recParts.push(textEl("iNatRec", "1"));
     recParts.push(textEl("iTiOpe", "1"));
     recParts.push(textEl("cPaisRec", "PRY"));
     recParts.push(textEl("dDesPaisRe", "Paraguay"));
-    recParts.push(textEl("iTiContRec", "1"));
+    recParts.push(textEl("iTiContRec", iTiContRec));
     recParts.push(textEl("dRucRec", dRucRec));
     recParts.push(textEl("dDVRec", dDVRec));
     recParts.push(textEl("dNomRec", receptor.nombre.trim()));
