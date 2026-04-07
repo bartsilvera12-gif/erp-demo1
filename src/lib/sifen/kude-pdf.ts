@@ -4,7 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { PDFDocument, StandardFonts, rgb, type PDFPage, type PDFFont, type RGB } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFImage, type PDFPage, type PDFFont, type RGB } from "pdf-lib";
 import QRCode from "qrcode";
 import type { KudeItemRow, KudeParsedFromXml } from "./parse-kude-from-signed-xml";
 
@@ -21,6 +21,30 @@ const NEURA_BLUE: RGB = rgb(14 / 255, 165 / 255, 233 / 255);
 const NEURA_BLUE_FILL: RGB = rgb(0.93, 0.97, 1);
 const BLACK: RGB = rgb(0, 0, 0);
 const GRAY: RGB = rgb(0.35, 0.35, 0.35);
+
+/** Distancia desde el borde superior de la página hasta la línea base del texto (pt). */
+function baselineFromTop(page: PDFPage, fromTop: number): number {
+  return page.getHeight() - fromTop;
+}
+
+function drawRectFromTop(
+  page: PDFPage,
+  left: number,
+  fromTop: number,
+  width: number,
+  height: number,
+  opts: { border?: RGB; borderW?: number; fill?: RGB }
+) {
+  page.drawRectangle({
+    x: left,
+    y: page.getHeight() - (fromTop + height),
+    width,
+    height,
+    borderColor: opts.border ?? NEURA_BLUE,
+    borderWidth: opts.borderW ?? 0.75,
+    color: opts.fill,
+  });
+}
 
 function formatMonto(nStr: string, moneda: string): string {
   const n = Number.parseFloat(String(nStr).replace(",", "."));
@@ -41,33 +65,49 @@ function readLogoBytes(): Uint8Array | null {
   return null;
 }
 
-function yFromTop(page: PDFPage, fromTop: number): number {
-  return page.getHeight() - fromTop;
-}
-
-function drawRectFromTop(
-  page: PDFPage,
-  left: number,
-  fromTop: number,
-  width: number,
-  height: number,
-  opts: { border?: RGB; borderW?: number; fill?: RGB }
-) {
-  page.drawRectangle({
-    x: left,
-    y: yFromTop(page, fromTop + height),
-    width,
-    height,
-    borderColor: opts.border ?? NEURA_BLUE,
-    borderWidth: opts.borderW ?? 0.75,
-    color: opts.fill,
-  });
-}
-
 function trunc(s: string, max: number): string {
   const t = s.replace(/\s+/g, " ").trim();
   if (t.length <= max) return t;
   return `${t.slice(0, Math.max(0, max - 1))}…`;
+}
+
+/** Alinea el texto al borde derecho `rightX` (coordenada x del final del trazo). */
+function drawTextRight(
+  page: PDFPage,
+  text: string,
+  rightX: number,
+  fromTop: number,
+  size: number,
+  font: PDFFont,
+  color: RGB
+) {
+  const w = font.widthOfTextAtSize(text, size);
+  page.drawText(text, {
+    x: rightX - w,
+    y: baselineFromTop(page, fromTop),
+    size,
+    font,
+    color,
+  });
+}
+
+/** Parte texto por ancho máximo aproximado (caracteres) para no invadir columna derecha. */
+function wrapByChars(text: string, maxChars: number): string[] {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= maxChars) return [t];
+  const out: string[] = [];
+  let rest = t;
+  while (rest.length > 0) {
+    if (rest.length <= maxChars) {
+      out.push(rest);
+      break;
+    }
+    let cut = rest.lastIndexOf(" ", maxChars);
+    if (cut < maxChars * 0.5) cut = maxChars;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  return out.filter(Boolean);
 }
 
 function drawTableChunk(
@@ -81,9 +121,9 @@ function drawTableChunk(
   fontBold: PDFFont
 ): number {
   const fsz = 6.5;
-  const headH = 15;
+  const headH = 16;
   const rowH = 11;
-  const bodyH = Math.max(12, items.length * rowH + 6);
+  const bodyH = Math.max(14, items.length * rowH + 8);
   const totalH = headH + bodyH;
 
   drawRectFromTop(page, margin, fromTop, innerW, totalH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
@@ -97,12 +137,12 @@ function drawTableChunk(
   const xEx = margin + 316;
   const x5 = margin + 366;
   const x10 = margin + 414;
-  let t = fromTop + 4;
+  let headerBaseline = fromTop + 11;
 
   const drawH = (txt: string, x: number, bold: boolean) => {
     page.drawText(txt, {
       x,
-      y: yFromTop(page, t + fsz * 0.85),
+      y: baselineFromTop(page, headerBaseline),
       size: fsz,
       font: bold ? fontBold : font,
       color: bold ? NEURA_BLUE : BLACK,
@@ -116,11 +156,10 @@ function drawTableChunk(
   drawH("Exentas", xEx, true);
   drawH("5%", x5, true);
   drawH("10%", x10, true);
-  t += headH;
 
-  let r = t + 3;
+  let rowBaseline = fromTop + headH + 9;
   for (const row of items) {
-    const yb = yFromTop(page, r + fsz * 0.85);
+    const yb = baselineFromTop(page, rowBaseline);
     page.drawText(trunc(row.codigo, 10), { x: xCod, y: yb, size: fsz, font, color: BLACK });
     page.drawText(trunc(row.descripcion, 40), { x: xDesc, y: yb, size: fsz, font, color: BLACK });
     page.drawText(trunc(row.unidadMedida, 8), { x: xUm, y: yb, size: fsz, font, color: BLACK });
@@ -129,10 +168,10 @@ function drawTableChunk(
     page.drawText(formatMonto(row.montoExenta, parsed.monedaCodigo), { x: xEx, y: yb, size: fsz, font, color: BLACK });
     page.drawText(formatMonto(row.montoGrav5, parsed.monedaCodigo), { x: x5, y: yb, size: fsz, font, color: BLACK });
     page.drawText(formatMonto(row.montoGrav10, parsed.monedaCodigo), { x: x10, y: yb, size: fsz, font, color: BLACK });
-    r += rowH;
+    rowBaseline += rowH;
   }
 
-  return fromTop + totalH + 8;
+  return fromTop + totalH + 10;
 }
 
 export async function buildKudePdfBuffer(input: BuildKudePdfInput): Promise<Buffer> {
@@ -152,8 +191,11 @@ export async function buildKudePdfBuffer(input: BuildKudePdfInput): Promise<Buff
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  const margin = 32;
+  const margin = 36;
   const innerW = A4_W - margin * 2;
+  const rightEdge = margin + innerW - 8;
+  /** Columna izquierda del encabezado: no escribir más allá de esta x para no chocar con la derecha. */
+  const headerSplitX = margin + innerW * 0.52;
   let page = pdfDoc.addPage([A4_W, A4_H]);
 
   const nroTimbrado = `${parsed.timbrado.dEst}-${parsed.timbrado.dPunExp}-${parsed.timbrado.dNumDoc}`;
@@ -165,141 +207,165 @@ export async function buildKudePdfBuffer(input: BuildKudePdfInput): Promise<Buff
 
   let cursorTop = margin;
 
-  /* ── Header ── */
-  const headerH = 120;
-  drawRectFromTop(page, margin, cursorTop, innerW, headerH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
-
-  let textLeft = margin + 8;
+  /* ── Header: medir → marco → logo + emisor (ancho limitado) + factura a la derecha ── */
+  const headerPad = 12;
+  const logoMaxW = 72;
+  let logoH = 0;
+  let logoW = 0;
+  let logoImg: PDFImage | null = null;
   const logoBytes = readLogoBytes();
   if (logoBytes) {
     try {
-      const img = await pdfDoc.embedPng(logoBytes);
-      const lw = 76;
-      const sc = lw / img.width;
-      const lh = img.height * sc;
-      page.drawImage(img, {
-        x: margin + 8,
-        y: yFromTop(page, cursorTop + 8 + lh),
-        width: lw,
-        height: lh,
-      });
-      textLeft = margin + 8 + lw + 10;
+      logoImg = await pdfDoc.embedPng(logoBytes);
+      logoW = logoMaxW;
+      const sc = logoW / logoImg.width;
+      logoH = logoImg.height * sc;
     } catch {
-      /* sin logo */
+      logoH = 0;
+      logoW = 0;
+      logoImg = null;
     }
   }
 
-  const midX = margin + innerW * 0.52;
-  let ln = cursorTop + 10;
-  const put = (s: string, x: number, size: number, bold: boolean, col: RGB = BLACK) => {
-    page.drawText(s, {
-      x,
-      y: yFromTop(page, ln + size * 0.85),
-      size,
-      font: bold ? fontBold : font,
-      color: col,
+  const leftTextX = margin + headerPad + (logoW > 0 ? logoW + 12 : 0);
+  const leftMaxChars = Math.max(28, Math.floor((headerSplitX - leftTextX) / 4.2));
+
+  const leftChunks: { lines: string[]; size: number; bold: boolean; col: RGB }[] = [
+    { lines: wrapByChars(parsed.emisor.dNomEmi, leftMaxChars), size: 9, bold: true, col: BLACK },
+    { lines: wrapByChars(parsed.emisor.dDirEmi, leftMaxChars), size: 7.5, bold: false, col: BLACK },
+    {
+      lines: wrapByChars(
+        `Tel.: ${parsed.emisor.dTelEmi}  |  Email: ${parsed.emisor.dEmailE}`,
+        leftMaxChars
+      ),
+      size: 7.5,
+      bold: false,
+      col: BLACK,
+    },
+    { lines: [`RUC: ${rucEmisor}`], size: 8.5, bold: true, col: BLACK },
+    { lines: [`Timbrado Nº: ${parsed.timbrado.dNumTim}`], size: 7.5, bold: false, col: BLACK },
+    { lines: [`Vigencia desde: ${parsed.timbrado.dFeIniT}`], size: 7.5, bold: false, col: BLACK },
+  ];
+
+  const rightLeadTitle = 13;
+  const rightLead = 11;
+  let leftBottom = cursorTop + headerPad + 9;
+  for (const ch of leftChunks) {
+    const lead = ch.size + 3;
+    leftBottom += ch.lines.length * lead;
+  }
+  const rightBottom = cursorTop + headerPad + 11 + rightLeadTitle + rightLead + rightLead;
+  const logoBottom = cursorTop + headerPad + logoH;
+  const headerBottom = Math.max(leftBottom, rightBottom, logoBottom) + 10;
+  const headerH = headerBottom - cursorTop;
+
+  drawRectFromTop(page, margin, cursorTop, innerW, headerH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
+
+  if (logoImg && logoW > 0) {
+    page.drawImage(logoImg, {
+      x: margin + headerPad,
+      y: baselineFromTop(page, cursorTop + headerPad + logoH),
+      width: logoW,
+      height: logoH,
     });
-  };
+  }
 
-  put(parsed.emisor.dNomEmi, textLeft, 10, true);
-  ln += 12;
-  put(parsed.emisor.dDirEmi, textLeft, 8, false);
-  ln += 10;
-  put(`Tel.: ${parsed.emisor.dTelEmi}  |  Email: ${parsed.emisor.dEmailE}`, textLeft, 8, false);
-  ln += 11;
-  put(`RUC: ${rucEmisor}`, textLeft, 9, true);
-  ln += 12;
-  put(`Timbrado Nº: ${parsed.timbrado.dNumTim}`, textLeft, 8, false);
-  ln += 10;
-  put(`Vigencia desde: ${parsed.timbrado.dFeIniT}`, textLeft, 8, false);
+  let leftBaseline = cursorTop + headerPad + 9;
+  for (const ch of leftChunks) {
+    const f = ch.bold ? fontBold : font;
+    const lead = ch.size + 3;
+    for (const ln of ch.lines) {
+      page.drawText(ln, {
+        x: leftTextX,
+        y: baselineFromTop(page, leftBaseline),
+        size: ch.size,
+        font: f,
+        color: ch.col,
+      });
+      leftBaseline += lead;
+    }
+  }
 
-  let lnR = cursorTop + 10;
-  const putHeaderRight = (s: string, size: number, bold: boolean, col: RGB = BLACK) => {
-    page.drawText(s, {
-      x: midX,
-      y: yFromTop(page, lnR + size * 0.85),
-      size,
-      font: bold ? fontBold : font,
-      color: col,
-    });
-  };
-  putHeaderRight("Factura electrónica", 11, true, NEURA_BLUE);
-  lnR += 13;
-  putHeaderRight(`Nº: ${nroTimbrado}`, 9, false);
-  lnR += 11;
-  putHeaderRight(`Ref. ERP: ${numeroFactura}`, 8, false, GRAY);
+  let rightBaseline = cursorTop + headerPad + 11;
+  drawTextRight(page, "Factura electrónica", rightEdge, rightBaseline, 10, fontBold, NEURA_BLUE);
+  rightBaseline += rightLeadTitle;
+  drawTextRight(page, `Nº: ${nroTimbrado}`, rightEdge, rightBaseline, 9, font, BLACK);
+  rightBaseline += rightLead;
+  drawTextRight(page, `Ref. ERP: ${numeroFactura}`, rightEdge, rightBaseline, 7.5, font, GRAY);
 
-  cursorTop += headerH + 8;
+  cursorTop += headerH + 10;
 
   const sectionTitle = (title: string) => {
     page.drawText(title, {
       x: margin,
-      y: yFromTop(page, cursorTop + 9 * 0.85),
+      y: baselineFromTop(page, cursorTop + 9),
       size: 9,
       font: fontBold,
       color: NEURA_BLUE,
     });
-    cursorTop += 12;
+    cursorTop += 13;
   };
 
   /* Operación */
   sectionTitle("DATOS DE LA OPERACIÓN");
-  const opH = 54;
+  const opH = 62;
   drawRectFromTop(page, margin, cursorTop, innerW, opH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
-  let lo = cursorTop + 8;
-  const putBox = (s: string) => {
+  let lo = cursorTop + 11;
+  const opLines = [
+    `Fecha de emisión: ${parsed.dFeEmiDE}`,
+    `Condición de venta: ${parsed.operacion.condicionVenta}`,
+    `Moneda: ${parsed.monedaDescripcion || parsed.monedaCodigo} (${parsed.monedaCodigo})`,
+    `Tipo de cambio: ${tipoCambio}`,
+    `Tipo de operación: ${parsed.operacion.tipoOperacion}`,
+  ];
+  for (const s of opLines) {
     page.drawText(s, {
-      x: margin + 8,
-      y: yFromTop(page, lo + 8 * 0.85),
+      x: margin + 10,
+      y: baselineFromTop(page, lo),
       size: 8,
       font,
       color: BLACK,
     });
     lo += 11;
-  };
-  putBox(`Fecha de emisión: ${parsed.dFeEmiDE}`);
-  putBox(`Condición de venta: ${parsed.operacion.condicionVenta}`);
-  putBox(`Moneda: ${parsed.monedaDescripcion || parsed.monedaCodigo} (${parsed.monedaCodigo})`);
-  putBox(`Tipo de cambio: ${tipoCambio}`);
-  putBox(`Tipo de operación: ${parsed.operacion.tipoOperacion}`);
-  cursorTop += opH + 8;
+  }
+  cursorTop += opH + 10;
 
   /* Cliente */
   sectionTitle("DATOS DEL CLIENTE");
-  const cliH = 56;
+  const cliH = 62;
   drawRectFromTop(page, margin, cursorTop, innerW, cliH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
-  let lc = cursorTop + 8;
-  const putCli = (s: string, sz: number, bold: boolean) => {
+  let lc = cursorTop + 11;
+  const cliDraw = (s: string, sz: number, bold: boolean) => {
     page.drawText(s, {
-      x: margin + 8,
-      y: yFromTop(page, lc + sz * 0.85),
+      x: margin + 10,
+      y: baselineFromTop(page, lc),
       size: sz,
       font: bold ? fontBold : font,
       color: BLACK,
     });
     lc += bold ? 12 : 11;
   };
-  putCli(`${parsed.receptor.docLabel}: ${parsed.receptor.docValue}`, 8, false);
-  putCli(trunc(parsed.receptor.nombre, 78), 9, true);
-  putCli(`Dirección: ${parsed.receptor.direccion || "—"}`, 8, false);
-  putCli(`Teléfono: ${parsed.receptor.telefono || "—"}`, 8, false);
-  cursorTop += cliH + 8;
+  cliDraw(`${parsed.receptor.docLabel}: ${parsed.receptor.docValue}`, 8, false);
+  cliDraw(trunc(parsed.receptor.nombre, 72), 9, true);
+  cliDraw(`Dirección: ${parsed.receptor.direccion || "—"}`, 8, false);
+  cliDraw(`Teléfono: ${parsed.receptor.telefono || "—"}`, 8, false);
+  cursorTop += cliH + 10;
 
-  /* Tabla ítems (paginar si hace falta) */
+  /* Tabla */
   sectionTitle("DETALLE DE LA MERCADERÍA / SERVICIOS");
-  const footerReserve = 175;
+  const footerReserve = 200;
   const rowH = 11;
-  const headH = 15;
+  const headH = 16;
   let idx = 0;
   const items = parsed.items;
   while (idx < items.length) {
     let room = A4_H - cursorTop - footerReserve;
-    if (room < headH + rowH + 16) {
+    if (room < headH + rowH + 20) {
       page = pdfDoc.addPage([A4_W, A4_H]);
       cursorTop = margin;
       room = A4_H - cursorTop - footerReserve;
     }
-    const maxRows = Math.max(1, Math.floor((room - headH - 10) / rowH));
+    const maxRows = Math.max(1, Math.floor((room - headH - 12) / rowH));
     const slice = items.slice(idx, idx + maxRows);
     if (slice.length === 0) {
       page = pdfDoc.addPage([A4_W, A4_H]);
@@ -313,60 +379,59 @@ export async function buildKudePdfBuffer(input: BuildKudePdfInput): Promise<Buff
       cursorTop = margin;
       page.drawText("(Continúa detalle)", {
         x: margin,
-        y: yFromTop(page, cursorTop + 8),
+        y: baselineFromTop(page, cursorTop + 8),
         size: 8,
         font,
         color: GRAY,
       });
-      cursorTop += 14;
+      cursorTop += 16;
     }
   }
 
-  /* Totales + IVA */
-  if (A4_H - cursorTop < 150) {
+  /* Totales */
+  if (A4_H - cursorTop < 160) {
     page = pdfDoc.addPage([A4_W, A4_H]);
     cursorTop = margin;
   }
   sectionTitle("TOTALES Y LIQUIDACIÓN DEL IVA");
-  const totH = 132;
+  const totH = 140;
   drawRectFromTop(page, margin, cursorTop, innerW, totH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
 
   const xL = margin + 10;
-  const xR = margin + innerW * 0.48;
-  let lt = cursorTop + 10;
-
-  const putL = (a: string, b: string, bold: boolean) => {
-    page.drawText(a, { x: xL, y: yFromTop(page, lt + 8 * 0.85), size: 8, font, color: BLACK });
+  const xR = margin + innerW * 0.5;
+  let lt = cursorTop + 12;
+  const putL = (a: string, b: string, useBoldValue: boolean) => {
+    page.drawText(a, { x: xL, y: baselineFromTop(page, lt), size: 8, font, color: BLACK });
     page.drawText(b, {
-      x: xL + 132,
-      y: yFromTop(page, lt + 8 * 0.85),
+      x: xL + 128,
+      y: baselineFromTop(page, lt),
       size: 8,
-      font: bold ? fontBold : font,
+      font: useBoldValue ? fontBold : font,
       color: BLACK,
     });
-    lt += 10;
+    lt += 11;
   };
   putL("Subtotal exentas:", formatMonto(parsed.totales.dSubExe, parsed.monedaCodigo), true);
   putL("Subtotal gravadas 5%:", formatMonto(parsed.totales.dSub5, parsed.monedaCodigo), true);
   putL("Subtotal gravadas 10%:", formatMonto(parsed.totales.dSub10, parsed.monedaCodigo), true);
-  lt += 2;
+  lt += 4;
   page.drawLine({
-    start: { x: margin + 6, y: yFromTop(page, lt) },
-    end: { x: margin + innerW - 6, y: yFromTop(page, lt) },
+    start: { x: margin + 6, y: baselineFromTop(page, lt) },
+    end: { x: margin + innerW * 0.46, y: baselineFromTop(page, lt) },
     thickness: 0.45,
     color: NEURA_BLUE,
   });
-  lt += 8;
+  lt += 10;
   page.drawText("Total de la operación:", {
     x: xL,
-    y: yFromTop(page, lt + 9 * 0.85),
+    y: baselineFromTop(page, lt),
     size: 9,
     font: fontBold,
     color: BLACK,
   });
   page.drawText(formatMonto(parsed.totales.dTotOpe, parsed.monedaCodigo), {
-    x: xL + 142,
-    y: yFromTop(page, lt + 9 * 0.85),
+    x: xL + 138,
+    y: baselineFromTop(page, lt),
     size: 9,
     font: fontBold,
     color: BLACK,
@@ -374,119 +439,155 @@ export async function buildKudePdfBuffer(input: BuildKudePdfInput): Promise<Buff
   lt += 13;
   putL("Total en guaraníes:", formatMonto(parsed.totales.dTotGralOpe, parsed.monedaCodigo), true);
 
-  let rt = cursorTop + 10;
+  let rt = cursorTop + 12;
   page.drawText("Liquidación IVA", {
     x: xR,
-    y: yFromTop(page, rt + 9 * 0.85),
+    y: baselineFromTop(page, rt),
     size: 9,
     font: fontBold,
     color: NEURA_BLUE,
   });
-  rt += 12;
+  rt += 13;
   const putIvaLine = (lab: string, val: string) => {
-    page.drawText(lab, { x: xR, y: yFromTop(page, rt + 8 * 0.85), size: 8, font, color: BLACK });
+    page.drawText(lab, { x: xR, y: baselineFromTop(page, rt), size: 8, font, color: BLACK });
     page.drawText(val, {
-      x: xR + 108,
-      y: yFromTop(page, rt + 8 * 0.85),
+      x: xR + 104,
+      y: baselineFromTop(page, rt),
       size: 8,
       font: fontBold,
       color: BLACK,
     });
-    rt += 10;
+    rt += 11;
   };
   putIvaLine("Base gravada 5%:", formatMonto(parsed.totales.dBaseGrav5, parsed.monedaCodigo));
   putIvaLine("IVA 5%:", formatMonto(parsed.totales.dIVA5, parsed.monedaCodigo));
   putIvaLine("Base gravada 10%:", formatMonto(parsed.totales.dBaseGrav10, parsed.monedaCodigo));
   putIvaLine("IVA 10%:", formatMonto(parsed.totales.dIVA10, parsed.monedaCodigo));
-  rt += 4;
+  rt += 5;
   page.drawLine({
-    start: { x: xR - 2, y: yFromTop(page, rt) },
-    end: { x: margin + innerW - 8, y: yFromTop(page, rt) },
+    start: { x: xR - 2, y: baselineFromTop(page, rt) },
+    end: { x: rightEdge, y: baselineFromTop(page, rt) },
     thickness: 0.5,
     color: NEURA_BLUE,
   });
-  rt += 8;
+  rt += 10;
   page.drawText("Total IVA:", {
     x: xR,
-    y: yFromTop(page, rt + 9 * 0.85),
+    y: baselineFromTop(page, rt),
     size: 9,
     font: fontBold,
     color: BLACK,
   });
   page.drawText(formatMonto(parsed.totales.dTotIVA, parsed.monedaCodigo), {
-    x: xR + 108,
-    y: yFromTop(page, rt + 9 * 0.85),
+    x: xR + 104,
+    y: baselineFromTop(page, rt),
     size: 9,
     font: fontBold,
     color: BLACK,
   });
 
-  cursorTop += totH + 10;
+  cursorTop += totH + 12;
 
-  /* Pie */
-  if (A4_H - cursorTop < 160) {
+  /* Pie: fila 1 = QR (izq) + textos (der); fila 2 = leyendas ancho completo debajo del QR */
+  if (A4_H - cursorTop < 185) {
     page = pdfDoc.addPage([A4_W, A4_H]);
     cursorTop = margin;
   }
-  drawRectFromTop(page, margin, cursorTop, innerW, 152, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
 
   const qrImg = await pdfDoc.embedPng(new Uint8Array(qrPng));
-  const qSz = 92;
+  const qSz = 90;
+  const footPad = 14;
+  const gapAfterQr = 14;
+  const legendSize = 6.5;
+  const legendLead = 9;
+
+  const cdcLines = wrapByChars(`CDC: ${parsed.cdc}`, 52);
+  const footTextW = innerW - footPad * 2 - qSz - 16;
+  const footTextX = margin + footPad + qSz + 14;
+
+  let footTextBaseline = cursorTop + footPad + 9;
+  const textBlockLines =
+    1 +
+    cdcLines.length +
+    (dProtAut ? 1 : 0) +
+    wrapByChars("Escanee el código QR o consulte el CDC en el portal e-kuatia.", Math.max(30, Math.floor(footTextW / 3.4)))
+      .length;
+  const textBlockHeight = textBlockLines * 10 + 6;
+  const legendBlockHeight = legendLead * 3 + 8;
+  const footBoxH = footPad + Math.max(qSz, textBlockHeight) + gapAfterQr + legendBlockHeight + footPad;
+
+  drawRectFromTop(page, margin, cursorTop, innerW, footBoxH, { fill: rgb(1, 1, 1), border: NEURA_BLUE });
+
   page.drawImage(qrImg, {
-    x: margin + 12,
-    y: yFromTop(page, cursorTop + 12 + qSz),
+    x: margin + footPad,
+    y: baselineFromTop(page, cursorTop + footPad + qSz),
     width: qSz,
     height: qSz,
   });
 
-  const tx = margin + 12 + qSz + 14;
-  let ft = cursorTop + 14;
   page.drawText("Consulta de validez (e-kuatia / SET)", {
-    x: tx,
-    y: yFromTop(page, ft + 8 * 0.85),
+    x: footTextX,
+    y: baselineFromTop(page, footTextBaseline),
     size: 8,
     font: fontBold,
     color: NEURA_BLUE,
   });
-  ft += 11;
-  page.drawText(`CDC: ${parsed.cdc}`, {
-    x: tx,
-    y: yFromTop(page, ft + 7 * 0.85),
-    size: 7,
-    font,
-    color: BLACK,
-  });
-  ft += 9;
-  if (dProtAut) {
-    page.drawText(`dProtAut: ${dProtAut}`, {
-      x: tx,
-      y: yFromTop(page, ft + 7 * 0.85),
-      size: 7,
+  footTextBaseline += 12;
+  for (const line of cdcLines) {
+    page.drawText(line, {
+      x: footTextX,
+      y: baselineFromTop(page, footTextBaseline),
+      size: 7.5,
       font,
       color: BLACK,
     });
-    ft += 9;
+    footTextBaseline += 10;
   }
-  page.drawText("Escanee el código QR o consulte el CDC en el portal e-kuatia.", {
-    x: tx,
-    y: yFromTop(page, ft + 7 * 0.85),
-    size: 7,
-    font,
-    color: GRAY,
-  });
-  ft += 22;
-  page.drawText("ESTE DOCUMENTO ES UNA REPRESENTACIÓN GRÁFICA DE UN DOCUMENTO ELECTRÓNICO (XML)", {
-    x: margin + 8,
-    y: yFromTop(page, ft + 7 * 0.85),
-    size: 7,
-    font: fontBold,
-    color: NEURA_BLUE,
-  });
-  ft += 10;
+  if (dProtAut) {
+    for (const line of wrapByChars(`dProtAut: ${dProtAut}`, 52)) {
+      page.drawText(line, {
+        x: footTextX,
+        y: baselineFromTop(page, footTextBaseline),
+        size: 7.5,
+        font,
+        color: BLACK,
+      });
+      footTextBaseline += 10;
+    }
+  }
+  for (const line of wrapByChars(
+    "Escanee el código QR o consulte el CDC en el portal e-kuatia.",
+    Math.max(30, Math.floor(footTextW / 3.4))
+  )) {
+    page.drawText(line, {
+      x: footTextX,
+      y: baselineFromTop(page, footTextBaseline),
+      size: 7,
+      font,
+      color: GRAY,
+    });
+    footTextBaseline += 9;
+  }
+
+  const legendTop = cursorTop + footPad + qSz + gapAfterQr;
+  let leg = legendTop + 8;
+  const leg1 =
+    "ESTE DOCUMENTO ES UNA REPRESENTACIÓN GRÁFICA DE UN DOCUMENTO ELECTRÓNICO (XML)";
+  for (const line of wrapByChars(leg1, 78)) {
+    page.drawText(line, {
+      x: margin + footPad,
+      y: baselineFromTop(page, leg),
+      size: legendSize,
+      font: fontBold,
+      color: NEURA_BLUE,
+    });
+    leg += legendLead;
+  }
+  leg += 2;
   page.drawText("Generado con Neura ERP", {
-    x: margin + 8,
-    y: yFromTop(page, ft + 7 * 0.85),
-    size: 7,
+    x: margin + footPad,
+    y: baselineFromTop(page, leg),
+    size: 6.5,
     font,
     color: GRAY,
   });
