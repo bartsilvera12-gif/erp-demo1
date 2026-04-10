@@ -1,4 +1,5 @@
 import { clearBrowserEmpresaDataSchemaCache } from "@/lib/supabase/browser-data-client";
+import { usuarioEmailLookupVariants } from "@/lib/auth/usuario-email-variants";
 import { supabase } from "./supabase";
 
 /** Fila mínima de zentra_erp.usuarios usada en el cliente. */
@@ -69,14 +70,16 @@ export async function getCurrentUser(): Promise<CurrentUsuario | null> {
   const email = user.email?.trim();
   if (!email) return null;
 
-  const { data: rows, error } = await supabase
-    .from("usuarios")
-    .select("*")
-    .ilike("email", email.toLowerCase())
-    .limit(1);
+  for (const em of usuarioEmailLookupVariants(email)) {
+    const { data: rows, error } = await supabase
+      .from("usuarios")
+      .select("*")
+      .ilike("email", em)
+      .limit(1);
+    if (error) throw error;
+    const row = rows?.[0] as CurrentUsuario | undefined;
+    if (row) return row;
+  }
 
-  if (error) throw error;
-
-  const row = rows?.[0] as CurrentUsuario | undefined;
-  return row ?? null;
+  return null;
 }

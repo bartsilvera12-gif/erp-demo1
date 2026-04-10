@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import { getCurrentUser, getSession } from "@/lib/auth";
+import { isBootstrapSuperAdminEmail } from "@/lib/auth/super-admin-bootstrap-email";
 import { pathRequiresModuleSlug } from "@/lib/modulos/route-slug-map";
 
 const PUBLIC_ROUTES = ["/login"];
@@ -48,10 +49,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       let superAdmin = false;
       let slugs: string[] = [];
 
+      const bootstrapSuper = isBootstrapSuperAdminEmail(session.user.email ?? null);
+
       if (res.ok) {
         const data = (await res.json()) as { superAdmin?: boolean; slugs?: string[] };
-        superAdmin = !!data.superAdmin;
+        superAdmin = !!data.superAdmin || bootstrapSuper;
         slugs = Array.isArray(data.slugs) ? data.slugs : [];
+      } else {
+        superAdmin = bootstrapSuper;
       }
 
       if (!superAdmin) {

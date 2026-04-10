@@ -1,6 +1,7 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-admin";
 import { getAuthUserForApiRoute } from "@/lib/auth/get-auth-user-for-api-route";
 import { resolveUsuarioErpFromAuthUser } from "@/lib/auth/resolve-usuario-erp";
+import { isBootstrapSuperAdminEmail } from "@/lib/auth/super-admin-bootstrap-email";
 import { NextResponse } from "next/server";
 import { resolveEffectiveModules } from "@/lib/modulos/resolve-effective-modules";
 
@@ -26,7 +27,20 @@ export async function GET(request: Request) {
     const supabase = createServiceRoleClient();
 
     const usuario = await resolveUsuarioErpFromAuthUser(supabase, user);
+
     if (!usuario) {
+      if (isBootstrapSuperAdminEmail(user.email)) {
+        const modulos = await resolveEffectiveModules(supabase, {
+          id: user.id,
+          empresa_id: null,
+          rol: "super_admin",
+        });
+        return NextResponse.json({
+          superAdmin: true,
+          slugs: modulos.map((m) => m.slug).filter(Boolean),
+          modulos: modulos.map((m) => ({ id: m.id, nombre: m.nombre, slug: m.slug })),
+        });
+      }
       return NextResponse.json({ superAdmin: false, slugs: [], modulos: [] });
     }
 

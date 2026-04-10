@@ -31,6 +31,7 @@ import {
 import type { Session } from "@supabase/supabase-js";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import { getCurrentUser } from "@/lib/auth";
+import { isBootstrapSuperAdminEmail } from "@/lib/auth/super-admin-bootstrap-email";
 import { supabase } from "@/lib/supabase";
 import type { ModuloEmpresa } from "@/lib/empresas/actions";
 import { getFavoritos, toggleFavorito } from "@/lib/favorites";
@@ -258,14 +259,17 @@ export default function Sidebar() {
 
         let superA = false;
         let modList: ModuloEmpresa[] = [];
+        const bootstrapSuper = isBootstrapSuperAdminEmail(session.user.email ?? null);
 
         if (res.ok) {
           const body = (await res.json()) as {
             superAdmin?: boolean;
             modulos?: ModuloEmpresa[];
           };
-          superA = !!body.superAdmin;
+          superA = !!body.superAdmin || bootstrapSuper;
           modList = Array.isArray(body.modulos) ? body.modulos : [];
+        } else {
+          superA = bootstrapSuper;
         }
 
         if (!superA) {

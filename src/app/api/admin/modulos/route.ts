@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabaseServiceRoleClientOptions } from "@/lib/supabase/schema";
 import { getAuthUserForApiRoute } from "@/lib/auth/get-auth-user-for-api-route";
 import { resolveUsuarioErpFromAuthUser } from "@/lib/auth/resolve-usuario-erp";
+import { isBootstrapSuperAdminEmail } from "@/lib/auth/super-admin-bootstrap-email";
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
@@ -20,7 +21,9 @@ export async function GET(request: Request) {
 
     const supabaseSr = createClient(url, key, { ...supabaseServiceRoleClientOptions });
     const usuario = await resolveUsuarioErpFromAuthUser(supabaseSr, user);
-    if (!usuario || (usuario.rol ?? "").trim() !== "super_admin") {
+    const rolSuper = (usuario?.rol ?? "").trim() === "super_admin";
+    const bootstrapSuper = isBootstrapSuperAdminEmail(user.email);
+    if (!rolSuper && !bootstrapSuper) {
       return NextResponse.json({ error: "No autorizado" }, { status: 403 });
     }
 

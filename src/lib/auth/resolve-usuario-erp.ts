@@ -1,21 +1,12 @@
 import type { User } from "@supabase/supabase-js";
 import type { ModulosSupabase } from "@/lib/modulos/resolve-effective-modules";
+import { usuarioEmailLookupVariants } from "@/lib/auth/usuario-email-variants";
 
 export type UsuarioErpBasico = {
   id: string;
   empresa_id: string | null;
   rol: string | null;
 };
-
-function collectEmailVariants(email: string | null | undefined): string[] {
-  const t = email?.trim().toLowerCase();
-  if (!t) return [];
-  const set = new Set<string>();
-  set.add(t);
-  set.add(t.replace(/neuratomations/g, "neurautomations"));
-  set.add(t.replace(/neurautomations/g, "neuratomations"));
-  return [...set];
-}
 
 /**
  * Resuelve la fila `zentra_erp.usuarios` para la sesión de Auth.
@@ -39,7 +30,7 @@ export async function resolveUsuarioErpFromAuthUser(
   if (hitAuth) return hitAuth;
 
   const emailsToTry = new Set<string>();
-  for (const e of collectEmailVariants(user.email)) emailsToTry.add(e);
+  for (const e of usuarioEmailLookupVariants(user.email ?? "")) emailsToTry.add(e);
 
   if (typeof supabase.auth?.admin?.getUserById === "function") {
     try {
@@ -47,7 +38,7 @@ export async function resolveUsuarioErpFromAuthUser(
       if (admErr) {
         console.error("[resolveUsuarioErpFromAuthUser] admin.getUserById:", admErr.message);
       } else {
-        for (const e of collectEmailVariants(adm?.user?.email)) emailsToTry.add(e);
+        for (const e of usuarioEmailLookupVariants(adm?.user?.email ?? "")) emailsToTry.add(e);
       }
     } catch (e) {
       console.error("[resolveUsuarioErpFromAuthUser] admin:", e);
