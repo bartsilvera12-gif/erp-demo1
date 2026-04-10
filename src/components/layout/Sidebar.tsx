@@ -239,7 +239,15 @@ export default function Sidebar() {
           setModulos([]);
           return;
         }
-        const { data: usuario } = await supabase.from("usuarios").select("rol").eq("email", user.email).single();
+        const { data: usuario, error: errUsuario } = await supabase
+          .from("usuarios")
+          .select("rol")
+          .eq("email", user.email)
+          .maybeSingle();
+        if (errUsuario) {
+          if (!cancelled) setModulos([]);
+          return;
+        }
         const rol = usuario?.rol;
         if (!cancelled) setEsSuperAdmin(rol === "super_admin");
         const data = rol === "super_admin" ? await getTodosModulos() : await getMisModulos();

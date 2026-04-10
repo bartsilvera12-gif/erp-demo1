@@ -18,11 +18,15 @@ export default function SorteosModuleGuard({ children }: { children: React.React
           if (!cancel) router.replace("/");
           return;
         }
-        const { data: usuario } = await supabase
+        const { data: usuario, error: errUsuario } = await supabase
           .from("usuarios")
           .select("rol")
           .eq("email", session.user.email)
-          .single();
+          .maybeSingle();
+        if (errUsuario) {
+          if (!cancel) router.replace("/");
+          return;
+        }
 
         if (usuario?.rol === "super_admin") {
           if (!cancel) setEstado("ok");

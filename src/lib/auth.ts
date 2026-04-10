@@ -45,9 +45,9 @@ export async function getCurrentUser() {
     .from("usuarios")
     .select("*")
     .eq("email", user.email)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
 
-  return data;
+  return data ?? null;
 }

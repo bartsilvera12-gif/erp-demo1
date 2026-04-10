@@ -1,5 +1,6 @@
 import { createBrowserClient } from "@supabase/ssr";
 import { supabaseDbSchemaOption, type AppSupabaseClient } from "@/lib/supabase/schema";
+import { supabase } from "@/lib/supabase";
 
 const SCHEMA_KEY = "neura_erp_data_schema_v1";
 const SCHEMA_TS_KEY = "neura_erp_data_schema_ts_v1";
@@ -27,7 +28,14 @@ export async function getBrowserSupabaseForEmpresaData(): Promise<AppSupabaseCli
     }) as AppSupabaseClient;
   }
 
-  const res = await fetch("/api/empresas/data-schema", { credentials: "include", cache: "no-store" });
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch("/api/empresas/data-schema", {
+    credentials: "include",
+    cache: "no-store",
+    ...(session?.access_token
+      ? { headers: { Authorization: `Bearer ${session.access_token}` } }
+      : {}),
+  });
   if (!res.ok) {
     throw new Error("No se pudo resolver el schema de datos de la empresa");
   }

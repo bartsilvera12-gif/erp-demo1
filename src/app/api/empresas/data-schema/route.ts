@@ -6,8 +6,8 @@ import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema"
  * GET /api/empresas/data-schema
  * Devuelve el schema PostgREST donde viven las tablas de negocio de la empresa autenticada.
  */
-export async function GET() {
-  const auth = await getUserAndEmpresa();
+export async function GET(request: Request) {
+  const auth = await getUserAndEmpresa(request);
   if (!auth) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
