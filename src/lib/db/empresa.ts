@@ -7,10 +7,11 @@ import { getBrowserSupabaseForEmpresaData } from "@/lib/supabase/browser-data-cl
  */
 export async function getEmpresaId(): Promise<string> {
   const usuario = await getCurrentUser();
-  if (!usuario?.empresa_id) {
+  const id = usuario?.empresa_id?.trim();
+  if (!usuario || !id) {
     throw new Error("Usuario no autenticado o sin empresa");
   }
-  return usuario.empresa_id;
+  return id;
 }
 
 /**

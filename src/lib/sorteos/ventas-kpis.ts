@@ -45,12 +45,13 @@ export async function getSorteosVentasKpis(): Promise<SorteosVentasKpis> {
     return { boletosHoy: 0, boletosMes: 0, montoHoy: 0, montoMes: 0 };
   }
 
-  const { data: usuario, error: uErr } = await catalog
+  const { data: urows, error: uErr } = await catalog
     .from("usuarios")
     .select("empresa_id")
     .eq("email", user.email)
-    .single();
+    .limit(1);
 
+  const usuario = urows?.[0] as { empresa_id?: string } | undefined;
   if (uErr || !usuario?.empresa_id) {
     return { boletosHoy: 0, boletosMes: 0, montoHoy: 0, montoMes: 0 };
   }

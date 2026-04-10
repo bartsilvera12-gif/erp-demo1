@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { supabaseDbSchemaOption, supabaseServiceRoleClientOptions } from "@/lib/supabase/schema";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -40,6 +41,7 @@ export async function GET(
 
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(url, anonKey, {
+      ...supabaseDbSchemaOption,
       cookies: {
         getAll: () => cookieStore.getAll(),
         setAll: (c) => c.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
@@ -50,13 +52,15 @@ export async function GET(
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const supabase = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const supabase = createClient(url, serviceKey, { ...supabaseServiceRoleClientOptions });
 
-    const { data: currentUser } = await supabase
+    const { data: curRows } = await supabase
       .from("usuarios")
       .select("empresa_id, rol")
       .eq("email", user.email)
-      .single();
+      .limit(1);
+
+    const currentUser = curRows?.[0] as { empresa_id?: string; rol?: string } | undefined;
 
     const { data: usuario, error } = await supabase
       .from("usuarios")
@@ -141,6 +145,7 @@ export async function PATCH(
 
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(url, anonKey, {
+      ...supabaseDbSchemaOption,
       cookies: {
         getAll: () => cookieStore.getAll(),
         setAll: (c) => c.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
@@ -151,13 +156,15 @@ export async function PATCH(
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const supabase = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const supabase = createClient(url, serviceKey, { ...supabaseServiceRoleClientOptions });
 
-    const { data: currentUser } = await supabase
+    const { data: curRows } = await supabase
       .from("usuarios")
       .select("empresa_id, rol")
       .eq("email", user.email)
-      .single();
+      .limit(1);
+
+    const currentUser = curRows?.[0] as { empresa_id?: string; rol?: string } | undefined;
 
     const body = await req.json();
     const { nombre, email, telefono, fecha_nacimiento, estado, modulo_ids } = body;

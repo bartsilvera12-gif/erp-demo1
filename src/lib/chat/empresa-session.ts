@@ -27,12 +27,13 @@ export async function requireEmpresaUsuarioSession(): Promise<EmpresaUsuarioSess
   if (!user?.email) {
     throw new Error("Usuario no autenticado o sin empresa");
   }
-  const { data, error } = await supabase
+  const { data: rows, error } = await supabase
     .from("usuarios")
     .select("id, empresa_id")
     .eq("email", user.email)
-    .single();
+    .limit(1);
   if (error) throw new Error(error.message);
+  const data = rows?.[0] as { id?: string; empresa_id?: string } | undefined;
   const empresa_id = data?.empresa_id;
   const usuario_id = data?.id;
   if (!empresa_id || typeof empresa_id !== "string" || !usuario_id || typeof usuario_id !== "string") {
@@ -52,12 +53,13 @@ export async function requireEmpresaChatSession(): Promise<EmpresaChatSession> {
   if (!user?.email) {
     throw new Error("Usuario no autenticado o sin empresa");
   }
-  const { data, error } = await catalogSupabase
+  const { data: rows, error } = await catalogSupabase
     .from("usuarios")
     .select("id, empresa_id")
     .eq("email", user.email)
-    .single();
+    .limit(1);
   if (error) throw new Error(error.message);
+  const data = rows?.[0] as { id?: string; empresa_id?: string } | undefined;
   const empresa_id = data?.empresa_id;
   const usuario_id = data?.id;
   if (!empresa_id || typeof empresa_id !== "string" || !usuario_id || typeof usuario_id !== "string") {

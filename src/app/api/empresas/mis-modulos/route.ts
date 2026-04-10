@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { supabaseDbSchemaOption, supabaseServiceRoleClientOptions } from "@/lib/supabase/schema";
 import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -16,6 +17,7 @@ export async function GET() {
 
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(url, anonKey, {
+      ...supabaseDbSchemaOption,
       cookies: {
         getAll() {
           return cookieStore.getAll().map((c) => ({ name: c.name, value: c.value }));
@@ -35,16 +37,15 @@ export async function GET() {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const supabase = createClient(url, serviceKey, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
+    const supabase = createClient(url, serviceKey, { ...supabaseServiceRoleClientOptions });
 
-    const { data: usuario, error: errUsuario } = await supabase
+    const { data: urows, error: errUsuario } = await supabase
       .from("usuarios")
       .select("id, empresa_id, rol")
       .eq("email", user.email)
-      .single();
+      .limit(1);
 
+    const usuario = urows?.[0] as { id: string; empresa_id: string; rol: string } | undefined;
     if (errUsuario || !usuario) {
       return NextResponse.json([]);
     }

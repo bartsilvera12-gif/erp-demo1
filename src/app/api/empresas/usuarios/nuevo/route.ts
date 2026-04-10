@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { supabaseDbSchemaOption, supabaseServiceRoleClientOptions } from "@/lib/supabase/schema";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -30,7 +31,7 @@ async function findAuthUserIdByEmail(supabase: any, email: string): Promise<stri
 }
 
 /**
- * Crea usuario en Auth + public.usuarios, o si el correo ya existe en Auth,
+ * Crea usuario en Auth + `zentra_erp.usuarios`, o si el correo ya existe en Auth,
  * vincula ese usuario a la empresa del administrador (útil tras pruebas u otra empresa).
  */
 export async function POST(req: Request) {
@@ -44,6 +45,7 @@ export async function POST(req: Request) {
 
     const cookieStore = await cookies();
     const supabaseAuth = createServerClient(url, anonKey, {
+      ...supabaseDbSchemaOption,
       cookies: {
         getAll: () => cookieStore.getAll(),
         setAll: (c) => c.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
@@ -54,13 +56,15 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
-    const supabase = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const supabase = createClient(url, serviceKey, { ...supabaseServiceRoleClientOptions });
 
-    const { data: admin } = await supabase
+    const { data: adminRows } = await supabase
       .from("usuarios")
       .select("empresa_id, rol")
       .eq("email", authSession.email)
-      .single();
+      .limit(1);
+
+    const admin = adminRows?.[0] as { empresa_id?: string; rol?: string } | undefined;
 
     if (!admin?.empresa_id && admin?.rol !== "super_admin") {
       return NextResponse.json({ error: "Tu usuario no tiene empresa asignada." }, { status: 403 });

@@ -6,6 +6,8 @@ import { supabaseDbSchemaOption } from "@/lib/supabase/schema";
  * Refresca la sesión Supabase en cookies antes de Route Handlers / RSC.
  * Sin esto, getUser() en el servidor puede fallar y /api/empresas/data-schema devuelve 401.
  */
+const MW_DIAG = process.env.NEURA_DIAG_AUTH === "1";
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -13,6 +15,14 @@ export async function middleware(request: NextRequest) {
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) {
     return supabaseResponse;
+  }
+
+  if (MW_DIAG && request.nextUrl.pathname.startsWith("/api/empresas/data-schema")) {
+    const names = request.cookies.getAll().map((c) => c.name);
+    console.warn(
+      "[neura:diag:middleware]",
+      JSON.stringify({ path: request.nextUrl.pathname, cookieCount: names.length, cookieNames: names })
+    );
   }
 
   const supabase = createServerClient(url, anonKey, {

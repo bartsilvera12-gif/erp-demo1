@@ -11,13 +11,13 @@ export async function resolveDataSchemaForCurrentUserServer(): Promise<string> {
     return SUPABASE_APP_SCHEMA;
   }
 
-  const { data: urow } = await catalog
+  const { data: urows } = await catalog
     .from("usuarios")
     .select("empresa_id")
     .eq("email", user.email)
-    .maybeSingle();
+    .limit(1);
 
-  const empresaId = (urow as { empresa_id?: string } | null)?.empresa_id;
+  const empresaId = (urows?.[0] as { empresa_id?: string } | undefined)?.empresa_id;
   if (!empresaId) {
     return SUPABASE_APP_SCHEMA;
   }

@@ -13,5 +13,7 @@ export async function GET() {
   return NextResponse.json({
     git_commit_sha: sha,
     vercel_env: process.env.VERCEL_ENV ?? null,
+    /** Presencia en JSON confirma deploy con auth/data-schema vía RLS (sin service key obligatoria en ese flujo). */
+    neura_auth_bundle: "api-auth-context-v2-rls",
   });
 }
