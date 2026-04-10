@@ -5,7 +5,11 @@ import { useRouter, usePathname } from "next/navigation";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import { getCurrentUser, getSession } from "@/lib/auth";
 import { isBootstrapSuperAdminEmail } from "@/lib/auth/super-admin-bootstrap-email";
-import { isModuleSlugGranted, pathRequiresModuleSlug } from "@/lib/modulos/route-slug-map";
+import {
+  firstAccessibleHref,
+  isModuleSlugGranted,
+  pathRequiresModuleSlug,
+} from "@/lib/modulos/route-slug-map";
 
 const PUBLIC_ROUTES = ["/login"];
 
@@ -85,13 +89,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     if (loading || isPublic || !access || !pathname) return;
 
     if (pathname.startsWith("/admin") && !access.superAdmin) {
-      router.replace("/");
+      router.replace(firstAccessibleHref(access.slugs, { superAdmin: false }));
       return;
     }
 
     const slug = pathRequiresModuleSlug(pathname);
     if (slug && !access.superAdmin && !isModuleSlugGranted(slug, access.slugs)) {
-      router.replace("/");
+      const dest = firstAccessibleHref(access.slugs, { superAdmin: access.superAdmin });
+      if (dest !== pathname.split("?")[0]) router.replace(dest);
     }
   }, [pathname, access, loading, isPublic, router]);
 

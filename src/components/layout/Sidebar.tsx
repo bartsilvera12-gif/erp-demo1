@@ -35,7 +35,7 @@ import { isBootstrapSuperAdminEmail } from "@/lib/auth/super-admin-bootstrap-ema
 import { supabase } from "@/lib/supabase";
 import type { ModuloEmpresa } from "@/lib/empresas/actions";
 import { getFavoritos, toggleFavorito } from "@/lib/favorites";
-import { isModuleSlugGranted } from "@/lib/modulos/route-slug-map";
+import { canAccessSidebarSlug } from "@/lib/modulos/route-slug-map";
 
 type MenuItem = {
   key: string;
@@ -126,7 +126,7 @@ function NavItem({
   const Icon = item.icon;
   const p = usePathname() ?? "";
 
-  if (!hasAccess && item.slug !== "dashboard") return null;
+  if (!hasAccess) return null;
 
   const childActive = item.children?.some((c) => menuChildPathActive(p, c.href, c.exactMatch));
 
@@ -332,15 +332,7 @@ export default function Sidebar() {
   };
 
   const modulosSlugs = new Set(modulos.map((m) => m.slug));
-  const hasChatModuleAccess = () =>
-    modulosSlugs.has("conversaciones") || modulosSlugs.has("omnicanal");
-  const hasAccess = (slug: string) => {
-    if (esSuperAdmin || slug === "dashboard") return true;
-    if (slug === "conversaciones" || slug === "historial-omnicanal" || slug === "colas-agentes") {
-      return hasChatModuleAccess();
-    }
-    return isModuleSlugGranted(slug, modulosSlugs);
-  };
+  const hasAccess = (slug: string) => canAccessSidebarSlug(slug, modulosSlugs, esSuperAdmin);
 
   const isActive = (slug: string, href: string) => {
     const p = pathname ?? "";
