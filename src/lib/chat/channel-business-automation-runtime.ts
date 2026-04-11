@@ -152,9 +152,22 @@ async function persistOutboundAutomation(
     .eq("empresa_id", empresaId);
 }
 
+export type BusinessAutomationInboundResult = {
+  sentWelcome: boolean;
+  sentAwayMessage: boolean;
+};
+
+const NO_AUTOMATION_SEND: BusinessAutomationInboundResult = {
+  sentWelcome: false,
+  sentAwayMessage: false,
+};
+
 /**
  * Tras persistir el mensaje entrante: bienvenida (solo primer mensaje del hilo)
  * y/o aviso fuera de horario (con cooldown).
+ *
+ * El webhook usa los flags para no ejecutar el motor de flujos en el mismo mensaje
+ * si ya se envió bienvenida o fuera de horario (evita múltiples respuestas simultáneas).
  */
 export async function runWhatsappBusinessAutomationAfterInbound(params: {
   supabase: SupabaseAdmin;
@@ -162,9 +175,9 @@ export async function runWhatsappBusinessAutomationAfterInbound(params: {
   channelId: string;
   conversationId: string;
   humanTakenOver: boolean;
-}): Promise<void> {
+}): Promise<BusinessAutomationInboundResult> {
   const { supabase, empresaId, channelId, conversationId, humanTakenOver } = params;
-  if (humanTakenOver) return;
+  if (humanTakenOver) return { ...NO_AUTOMATION_SEND };
 
   const { data: chRow, error: chErr } = await supabase
     .from("chat_channels")
@@ -172,26 +185,26 @@ export async function runWhatsappBusinessAutomationAfterInbound(params: {
     .eq("id", channelId)
     .eq("empresa_id", empresaId)
     .maybeSingle();
-  if (chErr || !chRow) return;
+  if (chErr || !chRow) return { ...NO_AUTOMATION_SEND };
 
   const settings = parseBusinessAutomationFromChannelConfig(
     (chRow as { config?: unknown }).config
   );
-  if (!settings.master_enabled) return;
+  if (!settings.master_enabled) return { ...NO_AUTOMATION_SEND };
 
   let ctx: Awaited<ReturnType<typeof getConversationWhatsAppSendContext>>;
   try {
     ctx = await getConversationWhatsAppSendContext(supabase, conversationId);
   } catch {
-    return;
+    return { ...NO_AUTOMATION_SEND };
   }
 
   const msgCount = await countMessagesInConversation(supabase, conversationId);
-  if (msgCount < 0) return;
+  if (msgCount < 0) return { ...NO_AUTOMATION_SEND };
 
-  const sendIfNeeded = async (text: string, kind: AutomationKind) => {
+  const sendIfNeeded = async (text: string, kind: AutomationKind): Promise<boolean> => {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    if (!trimmed) return false;
     const sendC = await sendWhatsAppText({
       toDigits: ctx.toDigits,
       phoneNumberId: ctx.phoneNumberId,
@@ -204,7 +217,7 @@ export async function runWhatsappBusinessAutomationAfterInbound(params: {
         kind,
         error: sendC.error,
       });
-      return;
+      return false;
     }
     await persistOutboundAutomation(
       supabase,
@@ -215,10 +228,14 @@ export async function runWhatsappBusinessAutomationAfterInbound(params: {
       kind,
       sendC.waMessageId
     );
+    return true;
   };
 
+  let sentWelcome = false;
+  let sentAwayMessage = false;
+
   if (settings.welcome_enabled && msgCount === 1) {
-    await sendIfNeeded(settings.welcome_message, "welcome");
+    sentWelcome = await sendIfNeeded(settings.welcome_message, "welcome");
   }
 
   if (
@@ -232,7 +249,9 @@ export async function runWhatsappBusinessAutomationAfterInbound(params: {
       settings.away_cooldown_minutes
     );
     if (!recent) {
-      await sendIfNeeded(settings.away_message, "away_hours");
+      sentAwayMessage = await sendIfNeeded(settings.away_message, "away_hours");
     }
   }
+
+  return { sentWelcome, sentAwayMessage };
 }

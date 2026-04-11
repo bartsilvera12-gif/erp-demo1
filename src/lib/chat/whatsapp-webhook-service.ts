@@ -776,8 +776,9 @@ export async function processInboundWebhookValue(
         }
       }
 
+      let businessAutomationResult = { sentWelcome: false, sentAwayMessage: false };
       try {
-        await runWhatsappBusinessAutomationAfterInbound({
+        businessAutomationResult = await runWhatsappBusinessAutomationAfterInbound({
           supabase,
           empresaId,
           channelId,
@@ -790,6 +791,8 @@ export async function processInboundWebhookValue(
           err: e instanceof Error ? e.message : String(e),
         });
       }
+      const skipFlowForBusinessAutomation =
+        businessAutomationResult.sentWelcome || businessAutomationResult.sentAwayMessage;
 
       console.info(logW, "conversation_updated_unread", { conversationId });
 
@@ -922,115 +925,127 @@ export async function processInboundWebhookValue(
 
       /**
        * 1) Presentar nodo actual si aún no se envió (botones/texto/media, etc.).
-       *    Sin esto, processTextReply solo reacciona a nodos de captura y el primer mensaje no dispara el flujo.
-       * 2) Luego procesar respuesta (botón / texto / imagen).
-       * Solo mensajes entrantes del cliente entran aquí (from_me: false); salientes del ERP no pasan por este bloque.
+       * 2) Procesar respuesta (botón / texto / imagen).
+       * Si business automation ya respondió (bienvenida o fuera de horario), no ejecutar el flujo
+       * en este mismo inbound para evitar múltiples mensajes al usuario.
        */
-      const presentResult = await flowEngine.ensureCurrentNodePresentedAfterInbound({
-        conversationId,
-        empresaId,
-      });
-      console.info(logW, "flow_present_step", {
-        conversationId,
-        ok: presentResult.ok,
-        status: presentResult.status,
-        presentedNow: presentResult.presentedNow,
-        acceptsInboundTextAsCapture: presentResult.acceptsInboundTextAsCapture,
-        error: presentResult.error ?? null,
-      });
-      if (!presentResult.ok && presentResult.error) {
-        errors.push(`Flow present: ${presentResult.error}`);
-      }
+      let presentResult: Awaited<
+        ReturnType<typeof flowEngine.ensureCurrentNodePresentedAfterInbound>
+      > | null = null;
 
-      const metaButtonId = extractMetaButtonId(msg);
-      if (metaButtonId) {
-        console.info(logW, "flow_trigger: interactive_reply", {
+      if (skipFlowForBusinessAutomation) {
+        console.info(logW, "skip_flow_engine_business_automation", {
           conversationId,
-          empresaId,
-          metaButtonId,
-          currentNode:
-            (existingConv as { flow_current_node?: string | null }).flow_current_node ??
-            "inicio",
+          sentWelcome: businessAutomationResult.sentWelcome,
+          sentAwayMessage: businessAutomationResult.sentAwayMessage,
         });
-        const interactiveResult = await flowEngine.processInteractiveReply({
-          conversationId,
-          empresaId,
-          metaButtonId,
-          rawPayload: msg as unknown as Record<string, unknown>,
-        });
-        console.info(logW, "flow_result: interactive", {
-          conversationId,
-          metaButtonId,
-          status: interactiveResult.status,
-          nextNodeCode: interactiveResult.nextNodeCode ?? null,
-        });
-        if (!interactiveResult.ok) {
-          errors.push(
-            `Flow interactive: ${interactiveResult.error ?? interactiveResult.status}`
-          );
-        }
-      } else if (message_type === "text") {
-        const skipAfterRestartKeyword = restartKeywordMatch && restartedThisMessage;
-        const skipBecauseNonCapturePresent =
-          presentResult.presentedNow && !presentResult.acceptsInboundTextAsCapture;
-        if (skipAfterRestartKeyword) {
-          console.info(logW, "skip_text_flow_handler", {
-            conversationId,
-            reason: "mensaje_usado_como_reinicio_flujo_no_es_captura",
-          });
-        } else if (skipBecauseNonCapturePresent) {
-          console.info(logW, "skip_text_flow_handler", {
-            conversationId,
-            reason:
-              "Se acaba de enviar la UI del nodo actual (no es captura de texto); el mismo mensaje no se interpreta como dato del flujo",
-          });
-        } else {
-          const textResult = await flowEngine.processTextReply({
-            conversationId,
-            empresaId,
-            textValue: content,
-            rawPayload: msg as unknown as Record<string, unknown>,
-          });
-          console.info(logW, "flow_result: text", {
-            conversationId,
-            status: textResult.status,
-            nextNodeCode: textResult.nextNodeCode ?? null,
-          });
-          if (!textResult.ok) {
-            errors.push(`Flow text: ${textResult.error ?? textResult.status}`);
-          }
-        }
       } else {
-        const comprobanteMedia = extractInboundComprobanteMedia(msg);
-        if (comprobanteMedia) {
-          const imageResult = await flowEngine.processImageReply({
+        presentResult = await flowEngine.ensureCurrentNodePresentedAfterInbound({
+          conversationId,
+          empresaId,
+        });
+        console.info(logW, "flow_present_step", {
+          conversationId,
+          ok: presentResult.ok,
+          status: presentResult.status,
+          presentedNow: presentResult.presentedNow,
+          acceptsInboundTextAsCapture: presentResult.acceptsInboundTextAsCapture,
+          error: presentResult.error ?? null,
+        });
+        if (!presentResult.ok && presentResult.error) {
+          errors.push(`Flow present: ${presentResult.error}`);
+        }
+
+        const metaButtonId = extractMetaButtonId(msg);
+        if (metaButtonId) {
+          console.info(logW, "flow_trigger: interactive_reply", {
             conversationId,
             empresaId,
-            mediaId: comprobanteMedia.mediaId,
-            mimeType: comprobanteMedia.mimeType,
-            caption: comprobanteMedia.caption,
+            metaButtonId,
+            currentNode:
+              (existingConv as { flow_current_node?: string | null }).flow_current_node ??
+              "inicio",
+          });
+          const interactiveResult = await flowEngine.processInteractiveReply({
+            conversationId,
+            empresaId,
+            metaButtonId,
             rawPayload: msg as unknown as Record<string, unknown>,
           });
-          console.info(logW, "flow_result: comprobante_media", {
+          console.info(logW, "flow_result: interactive", {
             conversationId,
-            mediaId: comprobanteMedia.mediaId,
-            sourceType: comprobanteMedia.sourceType,
-            messageTypeFromMeta: msg.type ?? null,
-            status: imageResult.status,
-            nextNodeCode: imageResult.nextNodeCode ?? null,
+            metaButtonId,
+            status: interactiveResult.status,
+            nextNodeCode: interactiveResult.nextNodeCode ?? null,
           });
-          if (!imageResult.ok) {
-            errors.push(`Flow comprobante: ${imageResult.error ?? imageResult.status}`);
+          if (!interactiveResult.ok) {
+            errors.push(
+              `Flow interactive: ${interactiveResult.error ?? interactiveResult.status}`
+            );
           }
-        } else if (message_type === "image" || message_type === "document") {
-          errors.push(
-            `Flow comprobante: tipo ${message_type} pero falta media id en payload (revisar shape Meta/n8n)`
-          );
+        } else if (message_type === "text") {
+          const skipAfterRestartKeyword = restartKeywordMatch && restartedThisMessage;
+          const skipBecauseNonCapturePresent =
+            presentResult.presentedNow && !presentResult.acceptsInboundTextAsCapture;
+          if (skipAfterRestartKeyword) {
+            console.info(logW, "skip_text_flow_handler", {
+              conversationId,
+              reason: "mensaje_usado_como_reinicio_flujo_no_es_captura",
+            });
+          } else if (skipBecauseNonCapturePresent) {
+            console.info(logW, "skip_text_flow_handler", {
+              conversationId,
+              reason:
+                "Se acaba de enviar la UI del nodo actual (no es captura de texto); el mismo mensaje no se interpreta como dato del flujo",
+            });
+          } else {
+            const textResult = await flowEngine.processTextReply({
+              conversationId,
+              empresaId,
+              textValue: content,
+              rawPayload: msg as unknown as Record<string, unknown>,
+            });
+            console.info(logW, "flow_result: text", {
+              conversationId,
+              status: textResult.status,
+              nextNodeCode: textResult.nextNodeCode ?? null,
+            });
+            if (!textResult.ok) {
+              errors.push(`Flow text: ${textResult.error ?? textResult.status}`);
+            }
+          }
         } else {
-          console.info(logW, "no_typed_flow_handler", {
-            conversationId,
-            message_type,
-          });
+          const comprobanteMedia = extractInboundComprobanteMedia(msg);
+          if (comprobanteMedia) {
+            const imageResult = await flowEngine.processImageReply({
+              conversationId,
+              empresaId,
+              mediaId: comprobanteMedia.mediaId,
+              mimeType: comprobanteMedia.mimeType,
+              caption: comprobanteMedia.caption,
+              rawPayload: msg as unknown as Record<string, unknown>,
+            });
+            console.info(logW, "flow_result: comprobante_media", {
+              conversationId,
+              mediaId: comprobanteMedia.mediaId,
+              sourceType: comprobanteMedia.sourceType,
+              messageTypeFromMeta: msg.type ?? null,
+              status: imageResult.status,
+              nextNodeCode: imageResult.nextNodeCode ?? null,
+            });
+            if (!imageResult.ok) {
+              errors.push(`Flow comprobante: ${imageResult.error ?? imageResult.status}`);
+            }
+          } else if (message_type === "image" || message_type === "document") {
+            errors.push(
+              `Flow comprobante: tipo ${message_type} pero falta media id en payload (revisar shape Meta/n8n)`
+            );
+          } else {
+            console.info(logW, "no_typed_flow_handler", {
+              conversationId,
+              message_type,
+            });
+          }
         }
       }
 
