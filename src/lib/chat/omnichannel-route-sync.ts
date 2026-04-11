@@ -1,5 +1,62 @@
+import type { SupabaseAdmin } from "@/lib/chat/types";
 import { createServiceRoleClient } from "@/lib/supabase/service-admin";
 import { SUPABASE_APP_SCHEMA } from "@/lib/supabase/schema";
+
+export type OmnichannelRouteRow = {
+  empresa_id: string;
+  channel_id: string;
+  data_schema: string;
+};
+
+/**
+ * Lee `zentra_erp.omnichannel_routes` vía RPC `public.neura_get_omnichannel_route` (no depende de
+ * que PostgREST tenga la tabla en schema cache). Si el RPC no existe aún, intenta `.from()`.
+ */
+export async function fetchOmnichannelRouteByMetaPhone(
+  catalog: SupabaseAdmin,
+  phoneNumberId: string
+): Promise<OmnichannelRouteRow | null> {
+  const pid = phoneNumberId.trim();
+  if (!pid) return null;
+
+  const { data, error } = await catalog.rpc("neura_get_omnichannel_route", {
+    p_meta_phone_number_id: pid,
+  });
+
+  if (!error && data && typeof data === "object" && !Array.isArray(data)) {
+    const o = data as Record<string, unknown>;
+    if (o.empresa_id && o.channel_id) {
+      return {
+        empresa_id: String(o.empresa_id),
+        channel_id: String(o.channel_id),
+        data_schema: o.data_schema != null ? String(o.data_schema) : "",
+      };
+    }
+    return null;
+  }
+
+  if (error) {
+    console.warn("[omnichannel-route-sync] neura_get_omnichannel_route:", error.message);
+  }
+
+  const { data: row, error: qErr } = await catalog
+    .from("omnichannel_routes")
+    .select("empresa_id, channel_id, data_schema")
+    .eq("meta_phone_number_id", pid)
+    .maybeSingle();
+
+  if (qErr) {
+    console.warn("[omnichannel-route-sync] fallback omnichannel_routes:", qErr.message);
+    return null;
+  }
+  if (!row) return null;
+  const r = row as { empresa_id: string; channel_id: string; data_schema?: string | null };
+  return {
+    empresa_id: r.empresa_id,
+    channel_id: r.channel_id,
+    data_schema: r.data_schema != null ? String(r.data_schema) : "",
+  };
+}
 
 /**
  * Mantiene `zentra_erp.omnichannel_routes` alineado con canales WhatsApp en esquema tenant.
@@ -17,15 +74,39 @@ export async function syncOmnichannelRouteForWhatsappChannel(opts: {
 
   const catalog = createServiceRoleClient();
 
-  if (opts.dataSchema === SUPABASE_APP_SCHEMA) {
-    await catalog.from("omnichannel_routes").delete().eq("meta_phone_number_id", pid);
+  const rpcDelete = async () => {
+    const { error } = await catalog.rpc("neura_delete_omnichannel_route", {
+      p_meta_phone_number_id: pid,
+    });
+    return error;
+  };
+
+  const rpcSync = async () => {
+    const { error } = await catalog.rpc("neura_sync_omnichannel_route", {
+      p_meta_phone_number_id: pid,
+      p_empresa_id: opts.empresaId,
+      p_channel_id: opts.channelId,
+      p_data_schema: opts.dataSchema,
+      p_activo: opts.activo,
+    });
+    return error;
+  };
+
+  if (opts.dataSchema === SUPABASE_APP_SCHEMA || !opts.activo) {
+    const rpcErr = await rpcDelete();
+    if (!rpcErr) return;
+    const { error } = await catalog.from("omnichannel_routes").delete().eq("meta_phone_number_id", pid);
+    if (error) {
+      console.error("[omnichannel-route-sync] delete:", error.message);
+      throw new Error(error.message);
+    }
     return;
   }
 
-  if (!opts.activo) {
-    await catalog.from("omnichannel_routes").delete().eq("meta_phone_number_id", pid);
-    return;
-  }
+  const syncErr = await rpcSync();
+  if (!syncErr) return;
+
+  console.warn("[omnichannel-route-sync] neura_sync_omnichannel_route:", syncErr.message);
 
   const { error } = await catalog.from("omnichannel_routes").upsert(
     {
@@ -47,5 +128,14 @@ export async function deleteOmnichannelRouteByMetaPhone(metaPhoneNumberId: strin
   const pid = metaPhoneNumberId.trim();
   if (!pid) return;
   const catalog = createServiceRoleClient();
-  await catalog.from("omnichannel_routes").delete().eq("meta_phone_number_id", pid);
+  const { error: rpcErr } = await catalog.rpc("neura_delete_omnichannel_route", {
+    p_meta_phone_number_id: pid,
+  });
+  if (!rpcErr) return;
+  console.warn("[omnichannel-route-sync] neura_delete_omnichannel_route:", rpcErr.message);
+  const { error } = await catalog.from("omnichannel_routes").delete().eq("meta_phone_number_id", pid);
+  if (error) {
+    console.error("[omnichannel-route-sync] delete fallback:", error.message);
+    throw new Error(error.message);
+  }
 }

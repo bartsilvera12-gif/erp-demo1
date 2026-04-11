@@ -5,7 +5,10 @@ import {
 import { createFlowEngine } from "@/lib/chat/flow-engine-service";
 import { flowTrace } from "@/lib/chat/flow-trace-log";
 import { persistInboundChatMessageAndBump } from "@/lib/chat/incoming-message-service";
-import { syncOmnichannelRouteForWhatsappChannel } from "@/lib/chat/omnichannel-route-sync";
+import {
+  fetchOmnichannelRouteByMetaPhone,
+  syncOmnichannelRouteForWhatsappChannel,
+} from "@/lib/chat/omnichannel-route-sync";
 import { createWhatsappConversationWithActiveFlow } from "@/lib/chat/whatsapp-conversation-bootstrap";
 import { getConversationWhatsAppSendContext } from "@/lib/chat/conversation-send-context";
 import { attachInboundMessageMedia } from "@/lib/chat/inbound-media-attach";
@@ -171,6 +174,8 @@ type WhatsappChannelRow = {
  * el webhook solo miraba `zentra_erp.chat_channels` y fallaba. Recorremos
  * empresas con `data_schema` y reparamos la ruta al encontrar coincidencia.
  */
+const TENANT_DATA_SCHEMA_RE = /^er_[0-9a-f]{32}$/i;
+
 async function findWhatsappChannelInTenantSchemas(
   catalogSupabase: SupabaseAdmin,
   phoneNumberId: string
@@ -188,6 +193,13 @@ async function findWhatsappChannelInTenantSchemas(
   for (const e of (empresas ?? []) as Array<{ id: string; data_schema: string | null }>) {
     const schema = resolveEmpresaDataSchema(e.data_schema);
     if (schema === SUPABASE_APP_SCHEMA) continue;
+    if (!TENANT_DATA_SCHEMA_RE.test(schema)) {
+      console.warn("[webhook] scan tenant: omitiendo data_schema no estándar (se espera er_<uuid>)", {
+        empresa_id: e.id,
+        schema,
+      });
+      continue;
+    }
 
     const tenantSb = createServiceRoleClientWithDbSchema(schema) as SupabaseAdmin;
     const { data: ch, error: chErr } = await tenantSb
@@ -261,15 +273,11 @@ export async function processInboundWebhookValue(
   let dataSupabase: SupabaseAdmin = catalogSupabase;
   let channel: WhatsappChannelRow | null = null;
 
-  const { data: routeRow } = await catalogSupabase
-    .from("omnichannel_routes")
-    .select("empresa_id, channel_id, data_schema")
-    .eq("meta_phone_number_id", phoneNumberId)
-    .maybeSingle();
+  const routeRow = await fetchOmnichannelRouteByMetaPhone(catalogSupabase, phoneNumberId);
 
   if (routeRow) {
-    const r = routeRow as { empresa_id: string; channel_id: string; data_schema?: string | null };
-    const schema = resolveEmpresaDataSchema(r.data_schema);
+    const r = routeRow;
+    const schema = resolveEmpresaDataSchema(r.data_schema || null);
     dataSupabase =
       schema === SUPABASE_APP_SCHEMA
         ? catalogSupabase
@@ -340,15 +348,11 @@ export async function processInboundWebhookValue(
 
     if (!channel && provisionEnv) {
       await provisionChannelFromWebhookEnv(catalogSupabase, phoneNumberId, provisionEnv);
-      const { data: routeAfter } = await catalogSupabase
-        .from("omnichannel_routes")
-        .select("empresa_id, channel_id, data_schema")
-        .eq("meta_phone_number_id", phoneNumberId)
-        .maybeSingle();
+      const routeAfter = await fetchOmnichannelRouteByMetaPhone(catalogSupabase, phoneNumberId);
 
       if (routeAfter) {
-        const r = routeAfter as { empresa_id: string; channel_id: string; data_schema?: string | null };
-        const schema = resolveEmpresaDataSchema(r.data_schema);
+        const r = routeAfter;
+        const schema = resolveEmpresaDataSchema(r.data_schema || null);
         dataSupabase =
           schema === SUPABASE_APP_SCHEMA
             ? catalogSupabase
@@ -389,6 +393,23 @@ export async function processInboundWebhookValue(
       skipped: 0,
       errors: [
         `Canal no registrado para phone_number_id=${phoneNumberId}. Configurá el canal en el ERP (Conversaciones → Configuración) o definí WHATSAPP_DEFAULT_EMPRESA_ID y WHATSAPP_PHONE_NUMBER_ID (mismo ID que en Meta) en el servidor.`,
+      ],
+    };
+  }
+
+  const { data: channelSanity, error: chSanErr } = await dataSupabase
+    .from("chat_channels")
+    .select("id")
+    .eq("id", channel.id)
+    .eq("empresa_id", channel.empresa_id)
+    .maybeSingle();
+  if (chSanErr || !channelSanity) {
+    return {
+      ok: false,
+      processed: 0,
+      skipped: 0,
+      errors: [
+        `Canal ${channel.id} no existe en el schema PostgREST usado para chat_* (FK o data_schema inconsistente). Ejecutá migración supabase 20260411190000. ${chSanErr?.message ?? ""}`,
       ],
     };
   }
