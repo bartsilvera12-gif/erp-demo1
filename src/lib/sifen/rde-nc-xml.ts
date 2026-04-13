@@ -127,6 +127,19 @@ export function assertNotaCreditoXmlSinTipoTransaccionComercial(xml: string): vo
   }
 }
 
+/**
+ * SET rechaza NC si se informa condición de la operación (`gCamCond`: contado/crédito, formas de pago).
+ * Mensaje típico: «no se requiere informar la condición de la operación».
+ * En `tgDtipDE`, `gCamCond` es opcional (minOccurs=0) y no aplica a nota de crédito electrónica.
+ */
+export function assertNotaCreditoXmlSinCondicionOperacion(xml: string): void {
+  if (/<\s*gCamCond\b/i.test(xml)) {
+    throw new Error(
+      "XML NC (iTiDE=5): no debe incluir gCamCond (condición de operación: iCondOpe, formas de pago, etc.). La SET lo rechaza."
+    );
+  }
+}
+
 export function mapMotivoNcSifen(motivo: string): { iMotEmi: string; dDesMotEmi: string } {
   const t = motivo.toLowerCase();
   if (/descuent/.test(t)) return { iMotEmi: "3", dDesMotEmi: "Descuento" };
@@ -341,20 +354,6 @@ export function buildOfficialRdeNotaCreditoElectronicaXml(
    */
   totParts.push("</gTotSub>");
 
-  const gCamCondXml = [
-    "<gCamCond>",
-    textEl("iCondOpe", "1"),
-    textEl("dDCondOpe", "Contado"),
-    "<gPaConEIni>",
-    textEl("iTiPago", "1"),
-    textEl("dDesTiPag", "Efectivo"),
-    textEl("dMonTiPag", dTotOpeItem),
-    textEl("cMoneTiPag", "PYG"),
-    textEl("dDMoneTiPag", XSD_DES_MONE_PYG),
-    "</gPaConEIni>",
-    "</gCamCond>",
-  ].join("");
-
   const gCamNCDE = ["<gCamNCDE>", textEl("iMotEmi", iMotEmi), textEl("dDesMotEmi", dDesMotEmi), "</gCamNCDE>"].join("");
 
   const gCamDEAsoc = [
@@ -396,7 +395,6 @@ export function buildOfficialRdeNotaCreditoElectronicaXml(
     "</gDatGralOpe>",
     "<gDtipDE>",
     gCamNCDE,
-    gCamCondXml,
     itemXml,
     "</gDtipDE>",
     ...totParts,
@@ -414,5 +412,6 @@ export function buildOfficialRdeNotaCreditoElectronicaXml(
 
   assertNcXmlGtotSubTotalsDe150Order(out);
   assertNotaCreditoXmlSinTipoTransaccionComercial(out);
+  assertNotaCreditoXmlSinCondicionOperacion(out);
   return out;
 }
