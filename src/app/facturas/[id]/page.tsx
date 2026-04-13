@@ -224,6 +224,13 @@ function FacturaDetalleInner() {
       <FacturaElectronicaPanel
         facturaId={id}
         clienteId={factura.cliente_id}
+        facturaComercial={{
+          monto: factura.monto,
+          saldo: factura.saldo,
+          estado: factura.estado,
+          moneda: factura.moneda,
+          cliente_display: factura.cliente_display ?? "",
+        }}
         resumen={resumen}
         loadingResumen={loadingS}
         onResumenLoaded={onResumenLoaded}

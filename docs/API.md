@@ -96,6 +96,30 @@ Crea una nueva factura.
 
 ---
 
+#### GET /api/facturas/[id]/notas-credito
+
+Lista las notas de crédito de una factura e indica si se puede crear una nueva (reglas de negocio fase 1).
+
+**Respuesta `data`:** `{ items, puede_crear, motivo_bloqueo_creacion }`.
+
+---
+
+#### POST /api/facturas/[id]/notas-credito
+
+Crea una nota de crédito en estado **borrador** (monto = saldo pendiente; sin envío SIFEN en fase 1).
+
+**Body (JSON):** `motivo` (obligatorio, ≥5 caracteres), `observacion_interna` (opcional).
+
+**Errores típicos:** `409` si aún aplica cancelación del DE, saldo inconsistente, o ya existe NC en curso/aprobada.
+
+---
+
+#### PATCH /api/facturas/[id]/notas-credito/[ncId]
+
+**Body:** `{ "action": "anular_borrador" }` — solo si `estado_erp` es `borrador`.
+
+---
+
 ### Pagos
 
 #### GET /api/pagos
