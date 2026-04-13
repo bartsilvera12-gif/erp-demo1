@@ -33,7 +33,6 @@ const XMLNS_XSI = "http://www.w3.org/2001/XMLSchema-instance";
 const RDE_XSI_SCHEMA_LOCATION = `${NS} ${SIFEN_SIRECEP_DE_V150_XSD_FILE}`;
 
 const XSD_DES_TI_DE_NCE = "Nota de crédito electrónica";
-const XSD_DES_TIP_TRA_VENTA_MERC = "Venta de mercadería";
 const XSD_DES_T_IMP_IVA = "IVA";
 const XSD_DES_MONE_PYG = "Guarani";
 const XSD_DES_AFEC_GRAVADO = "Gravado IVA";
@@ -112,6 +111,19 @@ export function assertNcXmlGtotSubTotalsDe150Order(xml: string): void {
   }
   if (iB10 !== -1 && iTB !== -1 && !(iB10 < iTB)) {
     throw new Error("XML NC: orden gTotSub — dBaseGrav10 debe preceder a dTBasGraIVA (DE_v150).");
+  }
+}
+
+/**
+ * SET rechaza NC (iTiDE=5) si se informa tipo de transacción comercial (`iTipTra` / `dDesTipTra`):
+ * mensaje típico «Tipo de transacción no requerido para el tipo de documento electrónico seleccionado».
+ * En `tgOpeCom` esos nodos son opcionales en XSD (minOccurs=0) pero no aplican a nota de crédito.
+ */
+export function assertNotaCreditoXmlSinTipoTransaccionComercial(xml: string): void {
+  if (/<\s*iTipTra\b/i.test(xml) || /<\s*dDesTipTra\b/i.test(xml)) {
+    throw new Error(
+      "XML NC (iTiDE=5): no debe incluir tipo de transacción comercial (iTipTra / dDesTipTra). La SET lo rechaza para nota de crédito electrónica."
+    );
   }
 }
 
@@ -374,8 +386,6 @@ export function buildOfficialRdeNotaCreditoElectronicaXml(
     "<gDatGralOpe>",
     textEl("dFeEmiDE", dFeEmiDE),
     "<gOpeCom>",
-    textEl("iTipTra", "1"),
-    textEl("dDesTipTra", XSD_DES_TIP_TRA_VENTA_MERC),
     textEl("iTImp", "1"),
     textEl("dDesTImp", XSD_DES_T_IMP_IVA),
     textEl("cMoneOpe", "PYG"),
@@ -403,5 +413,6 @@ export function buildOfficialRdeNotaCreditoElectronicaXml(
     `</rDE>\n`;
 
   assertNcXmlGtotSubTotalsDe150Order(out);
+  assertNotaCreditoXmlSinTipoTransaccionComercial(out);
   return out;
 }

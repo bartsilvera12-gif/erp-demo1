@@ -138,6 +138,19 @@ export async function handleNcSifenXmlPost(opts: {
     xmlString = buildOfficialRdeNotaCreditoElectronicaXml(loaded.payload, xmlOpts);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error al generar XML SIFEN";
+    await supabase.from("nota_credito_evento").insert({
+      empresa_id: auth.empresa_id,
+      nota_credito_id: nid,
+      actor_user_id: auth.user.id,
+      tipo_evento: "validacion",
+      detalle_json: {
+        subtipo: "xml_nc_builder",
+        resultado: "error",
+        error: msg,
+        campo_rechazado_set_tipico:
+          /iTipTra|tipo de transacci/i.test(msg) ? "iTipTra/dDesTipTra (no permitido en NC)" : null,
+      },
+    });
     return NextResponse.json(errorResponse(msg), { status: 400 });
   }
 

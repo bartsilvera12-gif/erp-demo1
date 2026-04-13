@@ -12,6 +12,7 @@ import {
   assertItideNotaCredito,
   compararGtimbradoXmlConEmisorPayload,
 } from "@/lib/sifen/gtimb-nc-coherencia";
+import { assertNotaCreditoXmlSinTipoTransaccionComercial } from "@/lib/sifen/rde-nc-xml";
 import type { SifenPrevueloFacturaNcDTO } from "./types";
 
 export type SifenPrevueloNcCompletoDTO = {
@@ -203,7 +204,9 @@ export async function evaluarPrevueloNotaCreditoCompleto(
       };
     }
     try {
-      const parsed = extractOrigenFiscalDesdeRdeXml(bin.data.toString("utf8"));
+      const xmlNc = bin.data.toString("utf8");
+      assertNotaCreditoXmlSinTipoTransaccionComercial(xmlNc);
+      const parsed = extractOrigenFiscalDesdeRdeXml(xmlNc);
       assertItideNotaCredito(parsed);
       assertGtimbradoNcCoincideConPayloadOrThrow(parsed, loaded.payload.emisor);
       ncGtimbradoOk = true;
@@ -257,6 +260,7 @@ export async function validarNcFirmadoListoParaEnvioSet(opts: {
     return { ok: false, message: loaded.error.message };
   }
   try {
+    assertNotaCreditoXmlSinTipoTransaccionComercial(opts.xmlFirmadoUtf8);
     const parsed = extractOrigenFiscalDesdeRdeXml(opts.xmlFirmadoUtf8);
     assertItideNotaCredito(parsed);
     assertGtimbradoNcCoincideConPayloadOrThrow(parsed, loaded.payload.emisor);
