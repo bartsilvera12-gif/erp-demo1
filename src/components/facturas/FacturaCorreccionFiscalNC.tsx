@@ -147,6 +147,7 @@ export function FacturaCorreccionFiscalNC({
   puedeCancelarDe,
   deAprobado,
   onAfterNcMutation,
+  embedded = false,
 }: {
   facturaId: string;
   clienteId: string;
@@ -158,6 +159,8 @@ export function FacturaCorreccionFiscalNC({
   puedeCancelarDe: boolean;
   deAprobado: boolean;
   onAfterNcMutation?: () => void | Promise<void>;
+  /** Sin caja doble: para panel unificado junto a SIFEN. */
+  embedded?: boolean;
 }) {
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<NotaCreditoListItemDTO[]>([]);
@@ -325,45 +328,52 @@ export function FacturaCorreccionFiscalNC({
   const pasoReenviarBanner =
     ncRechazoMasReciente && nextNcSifenPasoReal(ncRechazoMasReciente, sifenPasoOpts);
 
+  const shell = embedded
+    ? "space-y-4 w-full min-w-0"
+    : "rounded-xl border border-slate-200 bg-white shadow-sm p-5 sm:p-6 space-y-4 w-full min-w-0";
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-5 sm:p-6 space-y-4 w-full min-w-0">
+    <div className={shell}>
       <div className="space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Corrección fiscal</h3>
             <p className="text-[11px] text-slate-500 mt-1">
-              SIFEN según configuración de la empresa:{" "}
-              <span className="font-semibold text-slate-700">{ambienteLabel}</span>
+              Ambiente: <span className="font-semibold text-slate-700">{ambienteLabel}</span>
             </p>
           </div>
           <Link
             href="/notas-credito"
             className="text-[11px] font-semibold text-[#0EA5E9] hover:underline shrink-0"
           >
-            Módulo global de NC →
+            Ver NC →
           </Link>
         </div>
-        <p className="text-xs text-slate-600 leading-relaxed max-w-3xl">
-          Si el documento electrónico está <span className="font-semibold">aprobado</span> y todavía podés cancelarlo
-          dentro del plazo, usá <span className="font-semibold">Cancelar factura (DE)</span> en la sección de facturación
-          electrónica. La <span className="font-semibold">nota de crédito</span> aplica cuando ya no corresponde
-          cancelar. El monto de la NC es el <span className="font-semibold">saldo pendiente</span> al crear el
-          borrador.
-        </p>
+        {!embedded ? (
+          <p className="text-xs text-slate-600 leading-relaxed max-w-3xl">
+            Con DE aprobado: cancelación en plazo desde el panel SIFEN; fuera de plazo, nota de crédito por el saldo
+            pendiente.
+          </p>
+        ) : (
+          <p className="text-[11px] text-slate-500">
+            NC por saldo pendiente si ya no aplica cancelación del DE.
+          </p>
+        )}
       </div>
 
-      <section
-        className="rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3 space-y-1"
-        aria-label="Factura vinculada"
-      >
-        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Factura</h4>
-        <p className="text-xs text-slate-700 leading-snug">
-          Corrección fiscal asociada a esta factura.{" "}
-          <Link href={`/facturas/${facturaId}`} className="font-semibold text-[#0EA5E9] hover:underline">
-            Abrir factura
-          </Link>
-        </p>
-      </section>
+      {!embedded ? (
+        <section
+          className="rounded-lg border border-slate-200 bg-slate-50/50 px-4 py-3 space-y-1"
+          aria-label="Factura vinculada"
+        >
+          <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Factura</h4>
+          <p className="text-xs text-slate-700 leading-snug">
+            <Link href={`/facturas/${facturaId}`} className="font-semibold text-[#0EA5E9] hover:underline">
+              Abrir factura
+            </Link>
+          </p>
+        </section>
+      ) : null}
 
       {mostrarHerramientasTestOverride && (
         <details className="rounded-lg border border-dashed border-slate-300 bg-slate-50/80 px-3 py-2 text-[11px] text-slate-700">
@@ -379,9 +389,8 @@ export function FacturaCorreccionFiscalNC({
       )}
 
       {puedeCancelarDe && (
-        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-900">
-          Podés cancelar el DE dentro del plazo. La nota de crédito no está disponible hasta que deje de aplicar la
-          cancelación.
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          Cancelación del DE disponible en el plazo (botones en la sección SIFEN).
         </div>
       )}
 

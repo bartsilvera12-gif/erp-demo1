@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Fragment, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import type {
   FacturaElectronicaDTO,
@@ -9,7 +9,7 @@ import type {
   SifenConsultaLoteUltimaPersistida,
 } from "@/lib/sifen/types";
 import { decodeXmlNumericEntities } from "@/lib/sifen/decode-xml-entities";
-import { SifenEstadoBadge, labelSifenEstado } from "./SifenEstadoBadge";
+import { SifenEstadoBadge } from "./SifenEstadoBadge";
 import { FacturaCorreccionFiscalNC } from "@/components/facturas/FacturaCorreccionFiscalNC";
 
 type Resumen = {
@@ -21,201 +21,54 @@ type Resumen = {
   cancelacion: SifenCancelacionPreviewDTO | null;
 };
 
-type PasoEmisionKey = "comercial" | "borrador" | "xml" | "firma" | "set" | "aprobacion";
-
-type PasoEmisionEstado = "pendiente" | "listo" | "espera" | "rechazado";
-
-const PASOS_EMISION: { key: PasoEmisionKey; label: string }[] = [
-  { key: "comercial", label: "Comercial" },
-  { key: "borrador", label: "Borrador" },
-  { key: "xml", label: "XML" },
-  { key: "firma", label: "Firma" },
-  { key: "set", label: "SET" },
-  { key: "aprobacion", label: "Aprobación" },
-];
-
-/** Mensaje en lenguaje simple + estado de cada paso del circuito (solo UI). */
-function resolverEstadoEmisionVisual(resumen: Resumen): {
-  mensaje: string;
-  pasos: Record<PasoEmisionKey, PasoEmisionEstado>;
-} {
-  const sinConfigActiva = !resumen.sifen_config_activa;
-  const pendientes: Record<PasoEmisionKey, PasoEmisionEstado> = {
-    comercial: "pendiente",
-    borrador: "pendiente",
-    xml: "pendiente",
-    firma: "pendiente",
-    set: "pendiente",
-    aprobacion: "pendiente",
-  };
-  const soloComercial: Record<PasoEmisionKey, PasoEmisionEstado> = {
-    ...pendientes,
-    comercial: "listo",
-  };
-
-  if (sinConfigActiva) {
-    return {
-      mensaje: "Esta empresa aún no tiene configurada la facturación electrónica.",
-      pasos: soloComercial,
-    };
-  }
-
+/** Una línea operativa (sin tutorial largo). */
+function subtituloSifenEjecutivo(resumen: Resumen): string {
+  if (!resumen.sifen_config_activa) return "Activá SIFEN en configuración para emitir el DE.";
   const fe = resumen.factura_electronica;
-  if (!fe) {
-    return {
-      mensaje: "Factura comercial creada. Aún no se inició el proceso electrónico.",
-      pasos: soloComercial,
-    };
-  }
-
-  const e = String(fe.estado_sifen);
-
-  switch (e) {
+  if (!fe) return "Aún no hay documento electrónico.";
+  switch (String(fe.estado_sifen)) {
     case "borrador":
-      return {
-        mensaje: "Borrador electrónico generado. Aún no fue convertido en XML fiscal.",
-        pasos: { ...soloComercial, borrador: "listo" },
-      };
+      return "Siguiente: XML, firma y envío al SET.";
     case "generado":
-      return {
-        mensaje: "XML generado. Aún no fue firmado digitalmente.",
-        pasos: { ...soloComercial, borrador: "listo", xml: "listo" },
-      };
+      return "Siguiente: firma y envío al SET.";
     case "firmado":
-      return {
-        mensaje:
-          "Documento firmado digitalmente. Aún no fue enviado a SET, por lo tanto todavía no es una factura electrónica emitida legalmente.",
-        pasos: { ...soloComercial, borrador: "listo", xml: "listo", firma: "listo" },
-      };
+      return "Listo para enviar el lote al SET.";
     case "enviado":
-      return {
-        mensaje: "Documento enviado a SET. Pendiente de confirmación.",
-        pasos: {
-          ...soloComercial,
-          borrador: "listo",
-          xml: "listo",
-          firma: "listo",
-          set: "espera",
-        },
-      };
+    case "en_proceso":
+      return "SET procesando. Consultá el lote para ver el resultado.";
     case "aprobado":
-      return {
-        mensaje: "Factura electrónica aprobada correctamente.",
-        pasos: {
-          comercial: "listo",
-          borrador: "listo",
-          xml: "listo",
-          firma: "listo",
-          set: "listo",
-          aprobacion: "listo",
-        },
-      };
+      return "DE aprobado.";
+    case "rechazado":
+      return "SET rechazó el DE. Revisá el detalle abajo.";
+    case "error_envio":
+      return fe.error?.trim()
+        ? fe.error.trim().length > 140
+          ? `${fe.error.trim().slice(0, 140)}…`
+          : fe.error.trim()
+        : "Falló el envío. Podés reintentar.";
     case "cancelado":
-      return {
-        mensaje: "Documento electrónico cancelado en el ERP (trazabilidad conservada).",
-        pasos: {
-          comercial: "listo",
-          borrador: "listo",
-          xml: "listo",
-          firma: "listo",
-          set: "listo",
-          aprobacion: "listo",
-        },
-      };
-    case "rechazado":
-      return {
-        mensaje: "SET rechazó el documento. Revisar observaciones.",
-        pasos: {
-          comercial: "listo",
-          borrador: "listo",
-          xml: "listo",
-          firma: "listo",
-          set: "listo",
-          aprobacion: "rechazado",
-        },
-      };
-    case "error_envio": {
-      const ambSet =
-        resumen.sifen_ambiente === "produccion" ? "SET producción" : "SET (ambiente de pruebas)";
-      return {
-        mensaje: fe.error?.trim()
-          ? `El envío a ${ambSet} no se completó: ${fe.error.trim()}`
-          : `El envío del lote a ${ambSet} no se completó. Revisá el mensaje técnico abajo o reintentá.`,
-        pasos: {
-          ...soloComercial,
-          borrador: "listo",
-          xml: "listo",
-          firma: "listo",
-          set: "rechazado",
-        },
-      };
-    }
+      return "Cancelado en el ERP.";
     default:
-      return {
-        mensaje:
-          "Hay un registro electrónico asociado, pero el estado no es el esperado. Revisá el detalle técnico o contactá soporte.",
-        pasos: { ...soloComercial, borrador: "listo" },
-      };
+      return "Revisá el estado del documento.";
   }
 }
 
-function clasePaso(estado: PasoEmisionEstado): string {
-  switch (estado) {
-    case "listo":
-      return "bg-emerald-50 text-emerald-900 ring-1 ring-emerald-200/80 shadow-sm";
-    case "espera":
-      return "bg-amber-50 text-amber-900 ring-1 ring-amber-200/80 shadow-sm";
-    case "rechazado":
-      return "bg-red-50 text-red-800 ring-1 ring-red-200/80 shadow-sm";
-    default:
-      return "bg-slate-100 text-slate-400 ring-1 ring-slate-200/80";
-  }
-}
-
-function EstadoEmisionElectronicaBlock({ resumen }: { resumen: Resumen }) {
-  const { mensaje, pasos } = resolverEstadoEmisionVisual(resumen);
-  const sinConfigActiva = !resumen.sifen_config_activa;
-
+function ResumenSifenCompacto({ resumen }: { resumen: Resumen }) {
+  const fe = resumen.factura_electronica;
+  const st = fe?.estado_sifen ?? null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-gradient-to-b from-slate-50/80 to-white px-4 py-4 space-y-3">
-      <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Estado de emisión electrónica</h4>
-      <p className="text-sm text-slate-800 leading-relaxed font-medium">{mensaje}</p>
-      {sinConfigActiva && (
-        <p className="text-xs text-slate-500">
-          Si corresponde, podés configurarla en{" "}
-          <a href="/configuracion/facturacion-electronica" className="text-[#0EA5E9] font-semibold underline hover:no-underline">
-            Configuración → Facturación electrónica
+    <div className="flex flex-wrap items-center gap-3 min-w-0">
+      <SifenEstadoBadge estadoSifen={st} mostrarPistaEnvioSet={false} className="shrink-0" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm text-slate-600 leading-snug">{subtituloSifenEjecutivo(resumen)}</p>
+        {!resumen.sifen_config_activa ? (
+          <a
+            href="/configuracion/facturacion-electronica"
+            className="text-xs font-semibold text-[#0EA5E9] hover:underline mt-1 inline-block"
+          >
+            Configuración SIFEN
           </a>
-          .
-        </p>
-      )}
-
-      <div className="pt-1">
-        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Avance del proceso</p>
-        <div className="flex flex-wrap items-center gap-y-2 gap-x-0.5">
-          {PASOS_EMISION.map((p, i) => (
-            <Fragment key={p.key}>
-              {i > 0 && (
-                <span
-                  className={`mx-0.5 sm:mx-1 text-xs select-none ${
-                    pasos[PASOS_EMISION[i - 1].key] === "listo" ? "text-emerald-400" : "text-slate-200"
-                  }`}
-                  aria-hidden
-                >
-                  →
-                </span>
-              )}
-              <span
-                className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] sm:text-xs font-semibold ${clasePaso(pasos[p.key])}`}
-              >
-                {p.label}
-              </span>
-            </Fragment>
-          ))}
-        </div>
-        <p className="text-[10px] text-slate-400 mt-2 leading-snug">
-          Verde: listo · Gris: pendiente · Ámbar: en espera de respuesta · Rojo: rechazo en SET
-        </p>
+        ) : null}
       </div>
     </div>
   );
@@ -293,7 +146,14 @@ export function FacturaElectronicaPanel({
 }) {
   const router = useRouter();
   const [action, setAction] = useState<
-    "borrador" | "xml" | "firmar" | "enviar" | "consulta-lote" | "cancelar-de" | null
+    | "borrador"
+    | "xml"
+    | "firmar"
+    | "enviar"
+    | "consulta-lote"
+    | "cancelar-de"
+    | "pipeline"
+    | null
   >(null);
   const [flash, setFlash] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [cancelModal, setCancelModal] = useState<"cancelar" | "reemitir" | null>(null);
@@ -385,9 +245,10 @@ export function FacturaElectronicaPanel({
   const etiquetaAmbienteSet =
     resumen?.sifen_ambiente === "produccion" ? "producción" : "pruebas (TEST)";
 
-  const runEnviar = async () => {
+  const runEnviar = async (opts?: { accionUi?: "enviar" | "none" }) => {
+    const accionUi = opts?.accionUi ?? "enviar";
     setFlash(null);
-    setAction("enviar");
+    if (accionUi === "enviar") setAction("enviar");
     try {
       const res = await fetchWithSupabaseSession(`/api/facturas/${facturaId}/sifen/enviar`, { method: "POST" });
       const j = (await res.json()) as {
@@ -460,7 +321,7 @@ export function FacturaElectronicaPanel({
     } catch (e) {
       setFlash({ kind: "err", text: e instanceof Error ? e.message : "Error de red" });
     } finally {
-      setAction(null);
+      if (accionUi === "enviar") setAction(null);
     }
   };
 
@@ -503,9 +364,93 @@ export function FacturaElectronicaPanel({
     }
   };
 
+  /** Borrador → XML → firma → envío en una sola acción (mismos endpoints). */
+  const ejecutarGenerarYEnviar = async () => {
+    setFlash(null);
+    setAction("pipeline");
+    const post = async (path: string) => {
+      const res = await fetchWithSupabaseSession(path, { method: "POST" });
+      if (!res.ok) {
+        setFlash({ kind: "err", text: await readApiError(res) });
+        return false;
+      }
+      return true;
+    };
+    try {
+      let cur = await refresh();
+      if (!cur?.sifen_config_activa) {
+        setFlash({ kind: "err", text: "SIFEN no está activo para esta empresa." });
+        return;
+      }
+
+      if (!cur.factura_electronica) {
+        if (!(await post(`/api/facturas/${facturaId}/sifen/borrador`))) return;
+        cur = (await refresh()) ?? cur;
+      }
+
+      let feLocal = cur.factura_electronica;
+      let st = feLocal?.estado_sifen != null ? String(feLocal.estado_sifen) : "";
+
+      if (st === "aprobado" || st === "cancelado") {
+        setFlash({ kind: "ok", text: "Documento ya finalizado." });
+        return;
+      }
+      if (st === "rechazado") {
+        setFlash({
+          kind: "err",
+          text: "SET rechazó este DE. Revisá el detalle abajo o usá pasos avanzados.",
+        });
+        return;
+      }
+      if (st === "enviado" || st === "en_proceso") {
+        setFlash({ kind: "ok", text: "Ya consta envío a SET. Usá «Consultar lote»." });
+        return;
+      }
+
+      if (st === "borrador") {
+        if (!(await post(`/api/facturas/${facturaId}/sifen/xml`))) return;
+        cur = (await refresh()) ?? cur;
+        feLocal = cur.factura_electronica;
+        st = feLocal ? String(feLocal.estado_sifen) : "";
+      }
+
+      if (st === "generado") {
+        if (!(await post(`/api/facturas/${facturaId}/sifen/firmar`))) return;
+        cur = (await refresh()) ?? cur;
+        feLocal = cur.factura_electronica;
+        st = feLocal ? String(feLocal.estado_sifen) : "";
+      }
+
+      if (st === "error_envio") {
+        const signed = Boolean(feLocal?.xml_firmado_path?.trim());
+        if (!signed && feLocal?.xml_path?.trim()) {
+          if (!(await post(`/api/facturas/${facturaId}/sifen/firmar`))) return;
+          cur = (await refresh()) ?? cur;
+          feLocal = cur.factura_electronica;
+          st = feLocal ? String(feLocal.estado_sifen) : "";
+        }
+      }
+
+      if (st === "firmado" || (st === "error_envio" && feLocal?.xml_firmado_path?.trim())) {
+        await runEnviar({ accionUi: "none" });
+        await refresh();
+        return;
+      }
+
+      setFlash({
+        kind: "err",
+        text: "No se pudo completar el envío automático. Revisá «Pasos avanzados» o el estado del DE.",
+      });
+      await refresh();
+    } catch (e) {
+      setFlash({ kind: "err", text: e instanceof Error ? e.message : "Error de red" });
+    } finally {
+      setAction(null);
+    }
+  };
+
   const fe = resumen?.factura_electronica ?? null;
   const estado = fe?.estado_sifen ?? null;
-  const estadoLabel = fe ? labelSifenEstado(estado) : "Sin SIFEN";
 
   const puedeBorrador = Boolean(resumen?.sifen_config_activa) && !fe;
   const puedeGenerarXml =
@@ -528,47 +473,131 @@ export function FacturaElectronicaPanel({
 
   const deAprobado = Boolean(fe && String(estado) === "aprobado");
 
+  const stStr = estado != null ? String(estado) : "";
+  const primaryConsultarLote =
+    Boolean(resumen?.sifen_config_activa) &&
+    puedeConsultarLote &&
+    (stStr === "enviado" || stStr === "en_proceso");
+  const primaryGenerarYEnviar =
+    Boolean(resumen?.sifen_config_activa) &&
+    !primaryConsultarLote &&
+    (!fe || ["borrador", "generado", "firmado", "error_envio"].includes(stStr));
+  const busy = action !== null;
+
   return (
-    <div className="space-y-6 w-full min-w-0">
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
-        <div className="xl:col-span-5 min-w-0">
-          <FacturaCorreccionFiscalNC
-            facturaId={facturaId}
-            clienteId={clienteId}
-            clienteDisplay={facturaComercial.cliente_display}
-            monto={facturaComercial.monto}
-            saldo={facturaComercial.saldo}
-            estado={facturaComercial.estado}
-            moneda={facturaComercial.moneda}
-            puedeCancelarDe={Boolean(resumen?.cancelacion?.puede_cancelar)}
-            deAprobado={deAprobado}
-            onAfterNcMutation={onComercialUpdated}
-          />
-        </div>
+    <div className="rounded-xl border border-slate-200 bg-white shadow-sm p-5 sm:p-6 w-full min-w-0">
+      <div className="flex flex-col gap-8 lg:flex-row lg:items-stretch">
+        <div className="flex-1 min-w-0 space-y-5">
+          <div>
+            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              Factura electrónica (SIFEN)
+            </h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Ambiente SET: <span className="font-medium text-slate-700">{etiquetaAmbienteSet}</span>
+            </p>
+          </div>
 
-        <div className="xl:col-span-7 rounded-xl border border-slate-200 bg-white shadow-sm p-5 sm:p-6 space-y-4 min-w-0">
-      <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wide border-b border-slate-100 pb-2">
-        Facturación electrónica (SIFEN)
-      </h3>
+          {loadingResumen && <p className="text-sm text-slate-400">Cargando…</p>}
 
-      {loadingResumen && (
-        <p className="text-sm text-slate-400">Cargando estado SIFEN…</p>
-      )}
+          {!loadingResumen && resumen && <ResumenSifenCompacto resumen={resumen} />}
 
-      {!loadingResumen && resumen && <EstadoEmisionElectronicaBlock resumen={resumen} />}
+          {!loadingResumen && resumen && (
+            <>
+              {flash && (
+                <div
+                  className={`rounded-lg text-sm px-3 py-2 ${
+                    flash.kind === "ok"
+                      ? "bg-slate-50 border border-slate-200 text-slate-800"
+                      : "bg-red-50 border border-red-200 text-red-900"
+                  }`}
+                >
+                  {decodeXmlNumericEntities(flash.text)}
+                </div>
+              )}
 
-      {!loadingResumen && resumen && (
-        <>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-1">
-            Detalle y acciones
-          </p>
-          <div className="grid gap-4 lg:grid-cols-2 lg:gap-6 text-sm">
-            <div className="space-y-3 min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-slate-500">Estado SIFEN:</span>
-              <SifenEstadoBadge estadoSifen={fe ? estado : null} mostrarPistaEnvioSet={false} />
-              {!fe && <span className="text-slate-400">({estadoLabel})</span>}
-            </div>
+              <div className="flex flex-wrap items-center gap-3">
+                {primaryConsultarLote ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void runConsultaLote()}
+                    className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-semibold shadow-sm disabled:opacity-45 disabled:cursor-not-allowed hover:bg-slate-800"
+                  >
+                    {action === "consulta-lote" ? "Consultando…" : "Consultar lote"}
+                  </button>
+                ) : null}
+                {primaryGenerarYEnviar ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void ejecutarGenerarYEnviar()}
+                    className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-slate-900 text-white text-sm font-semibold shadow-sm disabled:opacity-45 disabled:cursor-not-allowed hover:bg-slate-800"
+                  >
+                    {action === "pipeline"
+                      ? "Procesando…"
+                      : stStr === "firmado" || (stStr === "error_envio" && fe?.xml_firmado_path?.trim())
+                        ? "Enviar a SET"
+                        : "Generar y enviar"}
+                  </button>
+                ) : null}
+                {!primaryConsultarLote && puedeConsultarLote && stStr !== "enviado" && stStr !== "en_proceso" ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void runConsultaLote()}
+                    className="text-sm font-medium text-slate-600 hover:text-slate-900 underline-offset-2 hover:underline disabled:opacity-40"
+                  >
+                    {action === "consulta-lote" ? "Consultando…" : "Consultar lote"}
+                  </button>
+                ) : null}
+              </div>
+
+              <details className="group rounded-lg border border-slate-100 bg-slate-50/40">
+                <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-600 select-none list-none flex items-center gap-2 [&::-webkit-details-marker]:hidden">
+                  <span className="text-slate-400 transition-transform group-open:rotate-90 inline-block">▸</span>
+                  Pasos avanzados (borrador, XML, firma por separado)
+                </summary>
+                <div className="px-3 pb-3 pt-0 flex flex-wrap gap-2 border-t border-slate-100/80">
+                  <button
+                    type="button"
+                    disabled={!puedeBorrador || busy}
+                    onClick={() => run("borrador")}
+                    className="px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-slate-200 bg-white text-slate-800 disabled:opacity-40 hover:bg-slate-50"
+                  >
+                    {action === "borrador" ? "…" : "Borrador"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!puedeGenerarXml || busy}
+                    onClick={() => run("xml")}
+                    className="px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-slate-200 bg-white text-slate-800 disabled:opacity-40 hover:bg-slate-50"
+                  >
+                    {action === "xml" ? "…" : fe?.xml_path?.trim() ? "XML" : "XML"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!puedeFirmar || busy}
+                    onClick={() => run("firmar")}
+                    className="px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-slate-200 bg-white text-slate-800 disabled:opacity-40 hover:bg-slate-50"
+                  >
+                    {action === "firmar" ? "…" : "Firmar"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      busy ||
+                      (stStr !== "firmado" &&
+                        !(stStr === "error_envio" && Boolean(fe?.xml_firmado_path?.trim())))
+                    }
+                    onClick={() => void runEnviar()}
+                    className="px-2.5 py-1.5 text-[11px] font-semibold rounded-md border border-slate-200 bg-white text-slate-800 disabled:opacity-40 hover:bg-slate-50"
+                  >
+                    {action === "enviar" ? "…" : "Solo enviar"}
+                  </button>
+                </div>
+              </details>
+
+              <div className="space-y-3 text-sm">
             {fe && resumen.cancelacion && estado === "aprobado" && (
               <div className="flex flex-wrap items-center gap-2 pt-1">
                 {resumen.cancelacion.puede_cancelar ? (
@@ -632,8 +661,7 @@ export function FacturaElectronicaPanel({
                   </>
                 ) : (
                   <p className="text-xs text-slate-500">
-                    La cancelación del DE no está disponible. Usá el bloque «Corrección fiscal» para la nota de crédito
-                    cuando corresponda.
+                    Cancelación DE no disponible: usá nota de crédito (panel derecho).
                   </p>
                 )}
               </div>
@@ -732,113 +760,50 @@ export function FacturaElectronicaPanel({
             )}
             </div>
 
-            <div className="space-y-3 min-w-0 lg:border-l lg:border-slate-100 lg:pl-6">
-
-          {flash && (
-            <div
-              className={`rounded-lg text-sm px-4 py-2 ${
-                flash.kind === "ok"
-                  ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
-                  : "bg-red-50 border border-red-200 text-red-800"
-              }`}
-            >
-              {decodeXmlNumericEntities(flash.text)}
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              type="button"
-              disabled={!puedeBorrador || action !== null}
-              onClick={() => run("borrador")}
-              className="px-3 py-2 text-xs font-semibold rounded-lg bg-slate-900 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800"
-            >
-              {action === "borrador" ? "Generando…" : "Generar borrador"}
-            </button>
-            <button
-              type="button"
-              disabled={!puedeGenerarXml || action !== null}
-              onClick={() => run("xml")}
-              className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-300 text-slate-800 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
-            >
-              {action === "xml"
-                ? "Generando XML…"
-                : fe?.xml_path?.trim()
-                  ? "Regenerar XML"
-                  : "Generar XML"}
-            </button>
-            <button
-              type="button"
-              disabled={!puedeFirmar || action !== null}
-              onClick={() => run("firmar")}
-              className="px-3 py-2 text-xs font-semibold rounded-lg border border-indigo-300 text-indigo-900 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-indigo-50"
-            >
-              {action === "firmar" ? "Firmando…" : "Firmar XML"}
-            </button>
-          </div>
-
-          {fe && puedeConsultarLote && (
-            <div className="rounded-lg border border-sky-200 bg-sky-50/40 px-4 py-3 space-y-2">
-              <p className="text-[10px] font-bold text-sky-900/70 uppercase tracking-wide">
-                Consulta asíncrona (SET)
-              </p>
-              <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={action !== null}
-                  onClick={() => void runConsultaLote()}
-                  className="w-fit px-3 py-2 text-xs font-semibold rounded-lg bg-sky-600 text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-sky-700"
-                >
-                  {action === "consulta-lote" ? "Consultando…" : "Consultar lote SET"}
-                </button>
-                <p className="text-xs text-slate-600">
-                  Usa el protocolo guardado tras enviar el lote (mismo ambiente que en configuración).
+              <details className="rounded-lg border border-slate-100 text-xs text-slate-500">
+                <summary className="cursor-pointer px-2 py-1.5 font-medium text-slate-600 select-none">
+                  Payload / documento (API)
+                </summary>
+                <p className="px-2 pb-2 pt-0 flex flex-wrap gap-x-3 gap-y-1">
+                  <a
+                    className="text-[#0EA5E9] font-medium hover:underline"
+                    href={`/api/facturas/${facturaId}/sifen/payload`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    JSON
+                  </a>
+                  <a
+                    className="text-[#0EA5E9] font-medium hover:underline"
+                    href={`/api/facturas/${facturaId}/sifen/documento`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Documento
+                  </a>
                 </p>
-              </div>
-            </div>
+              </details>
+            </>
           )}
 
-          {fe && estado === "firmado" && (
-            <div className="rounded-lg border border-dashed border-violet-200 bg-violet-50/50 px-4 py-3 space-y-2">
-              <p className="text-[10px] font-bold text-violet-900/70 uppercase tracking-wide">Siguiente paso</p>
-              <div className="flex flex-col sm:flex-row sm:items-center sm:flex-wrap gap-2 sm:gap-3">
-                <button
-                  type="button"
-                  disabled={action !== null}
-                  onClick={() => void runEnviar()}
-                  className="w-fit px-3 py-2 text-xs font-semibold rounded-lg bg-violet-600 text-white shadow-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-violet-700"
-                >
-                  {action === "enviar" ? "Enviando a SET…" : "Enviar a SET"}
-                </button>
-                <p className="text-xs text-violet-900/75 font-medium">
-                  Ambiente según Configuración → Facturación electrónica ({etiquetaAmbienteSet}). Certificado
-                  y CSC deben coincidir con ese ambiente.
-                </p>
-              </div>
-              <p className="text-xs text-slate-700 leading-relaxed">
-                Al enviar, el documento pasa a estado enviado en el ERP; SET procesa el lote de forma asíncrona.
-              </p>
-            </div>
-          )}
+        </div>
 
-          {fe && (
-            <div className="text-xs text-slate-400 pt-2 border-t border-slate-100 space-y-1">
-              <p>
-                Debug:{" "}
-                <a className="text-[#0EA5E9] hover:underline" href={`/api/facturas/${facturaId}/sifen/payload`} target="_blank" rel="noreferrer">
-                  payload JSON
-                </a>
-                {" · "}
-                <a className="text-[#0EA5E9] hover:underline" href={`/api/facturas/${facturaId}/sifen/documento`} target="_blank" rel="noreferrer">
-                  documento
-                </a>
-              </p>
-            </div>
-          )}
-            </div>
-          </div>
-        </>
-      )}
+        <aside className="lg:w-[min(100%,400px)] shrink-0 lg:border-l lg:border-slate-100 lg:pl-8 pt-6 lg:pt-0 border-t border-slate-100">
+          <FacturaCorreccionFiscalNC
+            facturaId={facturaId}
+            clienteId={clienteId}
+            clienteDisplay={facturaComercial.cliente_display}
+            monto={facturaComercial.monto}
+            saldo={facturaComercial.saldo}
+            estado={facturaComercial.estado}
+            moneda={facturaComercial.moneda}
+            puedeCancelarDe={Boolean(resumen?.cancelacion?.puede_cancelar)}
+            deAprobado={deAprobado}
+            onAfterNcMutation={onComercialUpdated}
+            embedded
+          />
+        </aside>
+      </div>
 
       {cancelModal != null && (
         <div
@@ -892,9 +857,6 @@ export function FacturaElectronicaPanel({
           </div>
         </div>
       )}
-
-        </div>
-      </div>
     </div>
   );
 }
