@@ -27,6 +27,7 @@ import {
   type ChatChannelFormInput,
   type ChatChannelRow,
 } from "@/lib/chat/actions";
+import { mapChannelSaveError } from "@/lib/chat/channel-save-errors";
 import {
   defaultChannelFormSectionState,
   formSectionStateForPersistence,
@@ -254,7 +255,9 @@ export function WhatsAppChannelForm({
         onSaved?.(id);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al guardar");
+      setError(
+        mapChannelSaveError(err, isYcloud ? "ycloud" : "meta")
+      );
     } finally {
       setSaving(false);
     }
