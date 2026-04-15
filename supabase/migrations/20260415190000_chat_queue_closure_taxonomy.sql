@@ -78,6 +78,8 @@ BEGIN
       $f$,
       r.sch,
       r.sch,
+      r.sch,
+      r.sch,
       r.sch
     );
 
