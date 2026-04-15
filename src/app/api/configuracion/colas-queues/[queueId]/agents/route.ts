@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { errorResponse, successResponse } from "@/lib/api/response";
 import { repoAddAgentToQueue } from "@/lib/chat/queue-admin-repo";
-import { resolveQueueAdminTenantContext } from "../../_tenant-ctx";
+import { normalizeQueueRouteId, resolveQueueAdminTenantContext } from "../../_tenant-ctx";
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ queueId: string }> }) {
   const resolved = await resolveQueueAdminTenantContext(request);
   if (!resolved) {
     return NextResponse.json(errorResponse("No autorizado"), { status: 401 });
   }
-  const { queueId } = await ctx.params;
+  const queueId = normalizeQueueRouteId((await ctx.params).queueId);
+  if (!queueId) {
+    return NextResponse.json(errorResponse("Identificador de cola inválido"), { status: 400 });
+  }
   try {
     const body = (await request.json()) as { usuario_id?: string };
     const uid = (body.usuario_id ?? "").trim();

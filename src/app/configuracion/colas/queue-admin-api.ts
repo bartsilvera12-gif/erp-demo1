@@ -31,7 +31,7 @@ export async function apiCreateQueueDraft(): Promise<string> {
   if (!res.ok || !json.success || !json.data?.id) {
     throw new Error(!json.success ? json.error : "No se pudo crear la cola");
   }
-  return json.data.id;
+  return String(json.data.id).trim();
 }
 
 export type QueueEditorBootstrap = {
@@ -40,6 +40,7 @@ export type QueueEditorBootstrap = {
   linked: { channel_id: string; channel_nombre: string | null; channel_type: string }[];
   agents: QueueAgentRow[];
   usuarios: UsuarioPickRow[];
+  bootstrapWarnings?: string[];
 };
 
 export async function apiQueueEditorBootstrap(queueId: string): Promise<QueueEditorBootstrap> {
@@ -49,7 +50,8 @@ export async function apiQueueEditorBootstrap(queueId: string): Promise<QueueEdi
   });
   const json = parseJson<ApiOk<QueueEditorBootstrap> | ApiErr>(await res.json());
   if (!res.ok || !json.success) {
-    throw new Error(!json.success ? json.error : "Error al cargar editor de cola");
+    const msg = !json.success ? json.error : res.status === 404 ? "Cola no encontrada" : "Error al cargar editor de cola";
+    throw new Error(msg);
   }
   return json.data;
 }

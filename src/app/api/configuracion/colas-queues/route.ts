@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
   try {
     const id = await repoCreateQueueDraft(resolved.ctx);
-    return NextResponse.json(successResponse({ id }));
+    return NextResponse.json(successResponse({ id: String(id) }));
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Error al crear cola";
     return NextResponse.json(errorResponse(msg), { status: 500 });

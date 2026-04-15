@@ -366,17 +366,39 @@ export async function repoLoadQueueEditorBootstrap(ctx: QueueAdminTenantContext,
   linked: QueueChannelLink[];
   agents: QueueAgentRow[];
   usuarios: UsuarioPickRow[];
+  /** Errores parciales (p. ej. tabla chat_queue_channels ausente); la cola igual puede cargarse. */
+  bootstrapWarnings: string[];
 }> {
   const qid = queueId.trim();
   if (!qid) {
-    return { queue: null, channels: [], linked: [], agents: [], usuarios: [] };
+    return { queue: null, channels: [], linked: [], agents: [], usuarios: [], bootstrapWarnings: [] };
   }
-  const [queue, channels, linked, agents, usuarios] = await Promise.all([
-    repoFetchQueue(ctx, qid),
+
+  const queue = await repoFetchQueue(ctx, qid);
+  if (!queue) {
+    return { queue: null, channels: [], linked: [], agents: [], usuarios: [], bootstrapWarnings: [] };
+  }
+
+  const settled = await Promise.allSettled([
     repoListChatChannels(ctx),
     repoListQueueChannelLinks(ctx, qid),
     repoListAgentsForQueue(ctx, qid),
     repoListUsuariosForQueuePick(ctx),
   ]);
-  return { queue, channels, linked, agents, usuarios };
+
+  const labels = ["canales", "vínculos cola–canales", "agentes", "usuarios para asignar"] as const;
+  const bootstrapWarnings: string[] = [];
+  const channels = settled[0].status === "fulfilled" ? settled[0].value : [];
+  const linked = settled[1].status === "fulfilled" ? settled[1].value : [];
+  const agents = settled[2].status === "fulfilled" ? settled[2].value : [];
+  const usuarios = settled[3].status === "fulfilled" ? settled[3].value : [];
+
+  settled.forEach((r, i) => {
+    if (r.status === "rejected") {
+      const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      bootstrapWarnings.push(`No se pudieron cargar ${labels[i]}: ${msg}`);
+    }
+  });
+
+  return { queue, channels, linked, agents, usuarios, bootstrapWarnings };
 }

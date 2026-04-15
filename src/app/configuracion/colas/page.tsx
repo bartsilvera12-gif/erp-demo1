@@ -62,7 +62,7 @@ export default function ConfiguracionColasPage() {
     setError(null);
     try {
       const id = await apiCreateQueueDraft();
-      router.push(`/configuracion/colas/${id}`);
+      router.push(`/configuracion/colas/${encodeURIComponent(id)}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo crear la cola");
     }
@@ -133,7 +133,7 @@ export default function ConfiguracionColasPage() {
                     {q.is_active ? "Activa" : "Inactiva"}
                   </span>
                   <Link
-                    href={`/configuracion/colas/${q.id}`}
+                    href={`/configuracion/colas/${encodeURIComponent(String(q.id ?? "").trim())}`}
                     className="text-sm font-semibold text-[#0EA5E9] hover:underline"
                   >
                     Editar

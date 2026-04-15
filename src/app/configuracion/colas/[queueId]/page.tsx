@@ -14,6 +14,7 @@ import {
   apiSetQueueChannelLinks,
   apiUpdateQueueAgent,
 } from "../queue-admin-api";
+import { queueEditorRouteId } from "../queue-route-params";
 import { getMisModulos } from "@/lib/empresas/actions";
 
 function hasOmnichannel(slugs: string[]) {
@@ -29,7 +30,7 @@ const STRATS: { value: string; label: string }[] = [
 export default function EditarColaPage() {
   const router = useRouter();
   const params = useParams();
-  const queueId = typeof params?.queueId === "string" ? params.queueId : "";
+  const queueId = queueEditorRouteId(params?.queueId as string | string[] | undefined);
 
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [queue, setQueue] = useState<ChatQueueAdminRow | null>(null);
@@ -41,6 +42,7 @@ export default function EditarColaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [bootstrapWarnings, setBootstrapWarnings] = useState<string[]>([]);
 
   const [nombre, setNombre] = useState("");
   const [descripcion, setDescripcion] = useState("");
@@ -53,10 +55,12 @@ export default function EditarColaPage() {
     if (!queueId) return;
     setLoading(true);
     setError(null);
+    setBootstrapWarnings([]);
     try {
       const boot = await apiQueueEditorBootstrap(queueId);
       const q = boot.queue;
       setQueue(q);
+      setBootstrapWarnings(Array.isArray(boot.bootstrapWarnings) ? boot.bootstrapWarnings : []);
       setChannels(boot.channels as ChatChannelRow[]);
       setLinked(boot.linked.map((l) => l.channel_id));
       setAgents(boot.agents);
@@ -142,6 +146,27 @@ export default function EditarColaPage() {
     );
   }
 
+  if (error && !queue) {
+    return (
+      <div className="max-w-xl space-y-4">
+        <p className="text-slate-800 font-medium">No se pudo cargar la cola</p>
+        <p className="text-sm text-red-700 rounded-xl border border-red-200 bg-red-50 px-4 py-3">{error}</p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="rounded-xl bg-[#0EA5E9] px-4 py-2 text-sm font-semibold text-white hover:bg-[#0284C7]"
+          >
+            Reintentar
+          </button>
+          <Link href="/configuracion/colas" className="text-sm font-semibold text-[#0EA5E9] hover:underline inline-flex items-center">
+            Volver al listado
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (!queue) {
     return (
       <div className="max-w-xl space-y-4">
@@ -165,6 +190,17 @@ export default function EditarColaPage() {
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
+      )}
+
+      {bootstrapWarnings.length > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 space-y-1">
+          <p className="font-semibold">Algunos datos secundarios no cargaron (la cola sí está disponible):</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {bootstrapWarnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
       <div className="flex flex-wrap items-start justify-between gap-3">
