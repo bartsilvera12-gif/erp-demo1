@@ -390,7 +390,8 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const scopedConv = async (q: any): Promise<any> => {
     if (bypass) return q;
-    return appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, q);
+    const { builder } = await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, q);
+    return builder;
   };
 
   const [queuesRes, agentsRes] = await Promise.all([queuesCountQ, agentsCountQ]);
@@ -744,7 +745,7 @@ export async function fetchSupervisorAgentLoads(): Promise<SupervisorAgentLoadRo
     .neq("status", "closed");
 
   if (!bypass) {
-    cq = await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, cq);
+    cq = (await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, cq)).builder;
   }
 
   const { data: counts, error } = await cq;
@@ -784,7 +785,7 @@ export async function countUnassignedOpenConversations(): Promise<number> {
     .in("status", ["open", "pending"]);
 
   if (!bypass) {
-    q = await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, q);
+    q = (await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, q)).builder;
   }
 
   const { count, error } = await q;

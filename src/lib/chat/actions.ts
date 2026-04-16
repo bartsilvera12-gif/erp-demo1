@@ -154,6 +154,7 @@ async function fetchChatConversationsUnsafe(
       active_flow_session_id
     `;
 
+  /** Ver `appendOmnicanalConversationScopeToQuery`: el builder PostgREST no debe devolverse “crudo” desde async. */
   const buildFilteredConversationQuery = async (selectStr: string) => {
     let qb = supabase.from("chat_conversations").select(selectStr).eq("empresa_id", empresa_id);
 
@@ -173,7 +174,8 @@ async function fetchChatConversationsUnsafe(
         const scope = await getOmnicanalScope(supabase, empresa_id, usuario_id);
         const bypass = await shouldBypassOmnicanalConversationScope(catalogSr, usuario_id, scope);
         if (!bypass) {
-          qb = await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, qb);
+          const { builder } = await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, qb);
+          qb = builder;
         }
       } catch (e) {
         console.error("[fetchChatConversations] alcance omnicanal omitido (inbox estable):", e);
@@ -231,11 +233,11 @@ async function fetchChatConversationsUnsafe(
       qb = qb.eq("priority", fp);
     }
 
-    return qb;
+    return { builder: qb };
   };
 
-  /* PostgREST + scope async: el builder se ensancha a `any` para encadenar `.order` sin choque de genéricos. */
-  let q: any = await buildFilteredConversationQuery(convSelectWithWait);
+  /* PostgREST: desempaquetar `.builder` — el builder es thenable y no puede devolverse solo desde async. */
+  let q: any = (await buildFilteredConversationQuery(convSelectWithWait)).builder;
   let { data: convs, error } = await q.order("last_message_at", {
     ascending: false,
     nullsFirst: false,
@@ -243,7 +245,7 @@ async function fetchChatConversationsUnsafe(
 
   if (error && isMissingColumnError(error.message, "assignment_wait_code")) {
     console.warn("[fetchChatConversations] assignment_wait_code ausente; reintento sin columna");
-    q = await buildFilteredConversationQuery(convSelectLegacy);
+    q = (await buildFilteredConversationQuery(convSelectLegacy)).builder;
     ({ data: convs, error } = await q.order("last_message_at", {
       ascending: false,
       nullsFirst: false,
@@ -252,7 +254,7 @@ async function fetchChatConversationsUnsafe(
 
   if (error) {
     console.warn("[fetchChatConversations] reintento select mínimo sin priority ni assignment_wait_code");
-    q = await buildFilteredConversationQuery(convSelectLegacyNoPriority);
+    q = (await buildFilteredConversationQuery(convSelectLegacyNoPriority)).builder;
     ({ data: convs, error } = await q.order("last_message_at", {
       ascending: false,
       nullsFirst: false,

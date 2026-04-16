@@ -211,6 +211,14 @@ export async function resolveQueueIdsForUsuarios(
 const NO_CONVERSATION_MATCH = "00000000-0000-0000-0000-000000000001";
 
 /**
+ * El builder de PostgREST es “thenable”: devolverlo desde una función `async` sin envoltorio
+ * ejecuta la query y devuelve `{ data, error }` → rompe encadenamientos como `.order()`.
+ * Siempre devolver `{ builder }` y desempaquetar en el llamador.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type OmnicanalScopedPostgrestBuilder = { builder: any };
+
+/**
  * Restringe un query builder de `chat_conversations` al alcance omnicanal.
  * No aplicar si `shouldBypassOmnicanalConversationScope` es true.
  * Admin operativo (`role === admin`) no debe llamar esta función (no-op si se llama).
@@ -222,8 +230,10 @@ export async function appendOmnicanalConversationScopeToQuery(
   scope: OmnicanalScope,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   q: any
-): Promise<any> {
-  if (isOmnicanalAdminScope(scope)) return q;
+): Promise<OmnicanalScopedPostgrestBuilder> {
+  const wrap = (b: any): OmnicanalScopedPostgrestBuilder => ({ builder: b });
+
+  if (isOmnicanalAdminScope(scope)) return wrap(q);
 
   const agentFkIds = await resolveChatAgentIdsForUsuarios(supabase, empresaId, scope.agentUsuarioIds);
   const queueIds = scope.queueIds ?? [];
@@ -235,22 +245,22 @@ export async function appendOmnicanalConversationScopeToQuery(
       console.warn(
         "[appendOmnicanalConversationScopeToQuery] alcance con colas/agentes declarados pero sin ids resueltos; se omite filtro (evita inbox vacío)."
       );
-      return q;
+      return wrap(q);
     }
-    return q.eq("id", NO_CONVERSATION_MATCH);
+    return wrap(q.eq("id", NO_CONVERSATION_MATCH));
   }
   if (queueIds.length > 0 && agentFkIds.length > 0) {
     const qIn = queueIds.map((id) => `"${normalizeId(id)}"`).join(",");
     const aIn = agentFkIds.map((id) => `"${normalizeId(id)}"`).join(",");
-    return q.or(`queue_id.in.(${qIn}),assigned_agent_id.in.(${aIn})`);
+    return wrap(q.or(`queue_id.in.(${qIn}),assigned_agent_id.in.(${aIn})`));
   }
   if (queueIds.length > 0) {
-    return q.in("queue_id", queueIds);
+    return wrap(q.in("queue_id", queueIds));
   }
   if (agentFkIds.length === 0) {
-    return q.eq("id", NO_CONVERSATION_MATCH);
+    return wrap(q.eq("id", NO_CONVERSATION_MATCH));
   }
-  return q.in("assigned_agent_id", agentFkIds);
+  return wrap(q.in("assigned_agent_id", agentFkIds));
 }
 
 /** Filtra ids de conversación que caen dentro del alcance (misma lógica que el append). */
@@ -271,13 +281,15 @@ export async function filterConversationIdsByOmnicanalScope(
 
   try {
     let q = supabase.from("chat_conversations").select("id").eq("empresa_id", empresaId).in("id", ids);
-    q = await appendOmnicanalConversationScopeToQuery(supabase, empresaId, scope, q);
-    const { data, error } = await q;
+    const { builder } = await appendOmnicanalConversationScopeToQuery(supabase, empresaId, scope, q);
+    const { data, error } = await builder;
     if (error) {
       console.warn("[filterConversationIdsByOmnicanalScope] error; fail-open lectura:", error.message);
       return new Set(ids);
     }
-    return new Set((data ?? []).map((r) => String((r as { id?: string }).id ?? "").trim()).filter(Boolean));
+    return new Set(
+      (data ?? []).map((r: { id?: string }) => String(r.id ?? "").trim()).filter(Boolean)
+    );
   } catch (e) {
     console.error("[filterConversationIdsByOmnicanalScope] excepción; fail-open:", e);
     return new Set(ids);
