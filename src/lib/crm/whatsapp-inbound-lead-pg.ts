@@ -1,12 +1,44 @@
 /**
  * Alta de lead CRM + enlace a `chat_contacts` vía Postgres (mismo pool que webhooks YCloud).
  * Evita depender de que PostgREST exponga `crm_*` en schemas tenant (`erp_*`).
+ *
+ * Schemas `er_<uuid>` (solo omnicanal) no contienen `crm_*`: el FK de `chat_contacts.crm_prospecto_id`
+ * apunta a `zentra_erp.crm_prospectos`. Se detecta con `information_schema` y se escribe CRM ahí.
  */
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
 import { assertAllowedChatDataSchema } from "@/lib/supabase/chat-data-schema";
+import { SUPABASE_APP_SCHEMA } from "@/lib/supabase/schema";
 
 const LOG = "[crm][whatsapp-inbound-lead-pg]";
+
+/** Schemas `er_*` omnicanal suelen tener solo `chat_*`; CRM vive en la plantilla compartida. */
+async function resolveCrmDataSchema(client: PoolClient, chatSchema: string): Promise<string | null> {
+  const r1 = await client.query<{ ok: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables t
+       WHERE t.table_schema = $1 AND t.table_type = 'BASE TABLE' AND t.table_name = 'crm_prospectos'
+     ) AS ok`,
+    [chatSchema]
+  );
+  if (r1.rows[0]?.ok) return chatSchema;
+
+  const app = assertAllowedChatDataSchema(SUPABASE_APP_SCHEMA);
+  if (app === chatSchema) return null;
+
+  const r2 = await client.query<{ ok: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables t
+       WHERE t.table_schema = $1 AND t.table_type = 'BASE TABLE' AND t.table_name = 'crm_prospectos'
+     ) AS ok`,
+    [app]
+  );
+  if (r2.rows[0]?.ok) {
+    console.info(LOG, "crm_schema_plantilla", { chat_schema: chatSchema, crm_schema: app });
+    return app;
+  }
+  return null;
+}
 
 function nextNumeroControlFromLast(last: string | null | undefined): string {
   const m = (last ?? "").match(/CRM-(\d+)/i);
@@ -28,9 +60,6 @@ export async function ensureWhatsappInboundCrmLeadPg(input: {
   const conv = quoteSchemaTable(schema, "chat_conversations");
   const ch = quoteSchemaTable(schema, "chat_channels");
   const ag = quoteSchemaTable(schema, "chat_agents");
-  const ce = quoteSchemaTable(schema, "crm_etapas");
-  const cp = quoteSchemaTable(schema, "crm_prospectos");
-  const cn = quoteSchemaTable(schema, "crm_notas");
 
   const client = await input.pool.connect();
   try {
@@ -55,6 +84,18 @@ export async function ensureWhatsappInboundCrmLeadPg(input: {
       return { ok: true };
     }
 
+    const crmSchema = await resolveCrmDataSchema(client, schema);
+    if (!crmSchema) {
+      await client.query("ROLLBACK");
+      return {
+        ok: false,
+        error: `No hay tabla crm_prospectos en "${schema}" ni en "${SUPABASE_APP_SCHEMA}"`,
+      };
+    }
+    const ce = quoteSchemaTable(crmSchema, "crm_etapas");
+    const cp = quoteSchemaTable(crmSchema, "crm_prospectos");
+    const cn = quoteSchemaTable(crmSchema, "crm_notas");
+
     let etapaCodigo = "LEAD";
     try {
       const etRes = await client.query(
@@ -72,7 +113,11 @@ export async function ensureWhatsappInboundCrmLeadPg(input: {
         "LEAD";
       etapaCodigo = String(etapaCodigo || "LEAD").trim() || "LEAD";
       if (etRows.length === 0) {
-        console.warn(LOG, "crm_etapas_vacío_usando_LEAD", { empresa_id: input.empresa_id, schema });
+        console.warn(LOG, "crm_etapas_vacío_usando_LEAD", {
+          empresa_id: input.empresa_id,
+          chat_schema: schema,
+          crm_schema: crmSchema,
+        });
       }
     } catch (e) {
       console.warn(LOG, "crm_etapas_omitido", e instanceof Error ? e.message : e);
@@ -174,7 +219,12 @@ export async function ensureWhatsappInboundCrmLeadPg(input: {
     );
 
     await client.query("COMMIT");
-    console.info(LOG, "lead_creado", { prospecto_id: prospectoId, contact_id: input.contact_id, schema });
+    console.info(LOG, "lead_creado", {
+      prospecto_id: prospectoId,
+      contact_id: input.contact_id,
+      chat_schema: schema,
+      crm_schema: crmSchema,
+    });
     return { ok: true };
   } catch (e) {
     await client.query("ROLLBACK").catch(() => {});
