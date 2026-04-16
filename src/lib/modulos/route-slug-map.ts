@@ -26,10 +26,30 @@ const SIDEBAR_SLUG_HREF_ORDER: { slug: string; href: string }[] = [
   { slug: "sorteos", href: "/sorteos" },
 ];
 
+const OMNICANAL_DASHBOARD_SLUGS = [
+  "conversaciones",
+  "historial-omnicanal",
+  "conversaciones-finalizadas",
+  "monitoreo",
+] as const;
+
+function isOmnicanalDashboardSlug(slug: string): boolean {
+  return (OMNICANAL_DASHBOARD_SLUGS as readonly string[]).includes(slug);
+}
+
 /** Slugs otorgados explícitamente o por alias (p. ej. `clientes` incluye gestión de cartera). */
 export function isModuleSlugGranted(routeSlug: string, grantedSlugs: Set<string>): boolean {
   if (grantedSlugs.has(routeSlug)) return true;
-  if (routeSlug === "conversaciones" && grantedSlugs.has("omnicanal")) return true;
+  // Paquete legacy: un solo permiso para todo el stack dashboard omnicanal.
+  if (grantedSlugs.has("omnicanal") && isOmnicanalDashboardSlug(routeSlug)) return true;
+  // Compatibilidad: quien solo tiene "conversaciones" sigue entrando a historial / finalizadas / monitoreo.
+  if (
+    grantedSlugs.has("conversaciones") &&
+    routeSlug !== "conversaciones" &&
+    isOmnicanalDashboardSlug(routeSlug)
+  ) {
+    return true;
+  }
   if (routeSlug === "gestion-clientes" && grantedSlugs.has("clientes")) return true;
   if (routeSlug === "notas_credito" && grantedSlugs.has("ventas")) return true;
   return false;
@@ -45,14 +65,6 @@ export function canAccessSidebarSlug(
 ): boolean {
   if (esSuperAdmin) return true;
   if (slug === "dashboard") return grantedSlugs.has("dashboard");
-  if (
-    slug === "conversaciones" ||
-    slug === "historial-omnicanal" ||
-    slug === "conversaciones-finalizadas" ||
-    slug === "monitoreo"
-  ) {
-    return grantedSlugs.has("conversaciones") || grantedSlugs.has("omnicanal");
-  }
   return isModuleSlugGranted(slug, grantedSlugs);
 }
 
@@ -77,7 +89,14 @@ export function pathRequiresModuleSlug(pathname: string): string | null {
   if (p.startsWith("/api")) return null;
   if (p.startsWith("/usuarios")) return "usuarios";
 
-  if (p.startsWith("/dashboard")) return "conversaciones";
+  if (p.startsWith("/dashboard")) {
+    if (p.startsWith("/dashboard/conversaciones-finalizadas")) return "conversaciones-finalizadas";
+    if (p.startsWith("/dashboard/historial-omnicanal")) return "historial-omnicanal";
+    if (p.startsWith("/dashboard/monitoreo")) return "monitoreo";
+    if (p.startsWith("/dashboard/sorteos")) return "sorteos";
+    if (p.startsWith("/dashboard/conversaciones")) return "conversaciones";
+    return "conversaciones";
+  }
   if (p.startsWith("/notas-credito")) return "notas_credito";
   if (p.startsWith("/ventas")) return "ventas";
   if (p.startsWith("/inventario")) return "inventario";
