@@ -397,11 +397,11 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
     }
   }
 
+  // PostgREST builders son thenables: nunca `return builder` desde `async` (se ejecuta la query y se pierde .order()).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const scopedConv = async (q: any): Promise<any> => {
-    if (bypass) return q;
-    const { builder } = await appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, q);
-    return builder;
+  const scopedConv = async (q: any) => {
+    if (bypass) return { builder: q };
+    return appendOmnicanalConversationScopeToQuery(supabase, empresa_id, scope, q);
   };
 
   const [queuesRes, agentsRes] = await Promise.all([queuesCountQ, agentsCountQ]);
@@ -414,7 +414,7 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
         .eq("empresa_id", empresa_id)
         .is("assigned_agent_id", null)
         .in("status", ["open", "pending"]);
-      q = await scopedConv(q);
+      q = (await scopedConv(q)).builder;
       return await q;
     })(),
     (async () => {
@@ -423,7 +423,7 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
         .select("*", { count: "exact", head: true })
         .eq("empresa_id", empresa_id)
         .eq("status", "pending");
-      q = await scopedConv(q);
+      q = (await scopedConv(q)).builder;
       return await q;
     })(),
     supabase
@@ -445,7 +445,7 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
         .in("status", ["open", "pending"])
         .order("last_message_at", { ascending: false, nullsFirst: false })
         .limit(30);
-      q = await scopedConv(q);
+      q = (await scopedConv(q)).builder;
       let r: any = await q;
       if (r.error && isMissingColumnError(r.error.message, "assignment_wait_code")) {
         let q2 = supabase
@@ -456,7 +456,7 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
           .in("status", ["open", "pending"])
           .order("last_message_at", { ascending: false, nullsFirst: false })
           .limit(30);
-        q2 = await scopedConv(q2);
+        q2 = (await scopedConv(q2)).builder;
         r = await q2;
       }
       return r;
@@ -469,7 +469,7 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
         .not("assigned_agent_id", "is", null)
         .is("first_human_response_at", null)
         .in("status", ["open", "pending"]);
-      q = await scopedConv(q);
+      q = (await scopedConv(q)).builder;
       return await q;
     })(),
     (async () => {
@@ -482,7 +482,7 @@ export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
         .not("assigned_agent_id", "is", null)
         .is("first_human_response_at", null)
         .in("status", ["open", "pending"]);
-      q = await scopedConv(q);
+      q = (await scopedConv(q)).builder;
       const r = await q.order("last_message_at", { ascending: false, nullsFirst: false }).limit(150);
       if (r.error && isMissingColumnError(r.error.message, "first_human_response_at")) {
         return { data: [], error: null };
@@ -990,13 +990,13 @@ export async function getMyAgentOperationalPresence(): Promise<MyAgentOperationa
   const { supabase, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
   let { data, error } = await supabase
     .from("chat_agents")
-    .select("operational_status, operational_status_changed_at")
+    .select("operational_status, operational_status_changed_at, updated_at")
     .eq("empresa_id", empresa_id)
     .eq("usuario_id", usuario_id);
   if (error && isMissingColumnError(error.message, "operational_status_changed_at")) {
     const r2 = await supabase
       .from("chat_agents")
-      .select("operational_status")
+      .select("operational_status, updated_at")
       .eq("empresa_id", empresa_id)
       .eq("usuario_id", usuario_id);
     data = r2.data as typeof data;
@@ -1022,15 +1022,23 @@ export async function getMyAgentOperationalPresence(): Promise<MyAgentOperationa
     console.warn("[getMyAgentOperationalPresence] error no fatal:", error.message);
     return { in_queues: false };
   }
-  const rows = (data ?? []) as { operational_status?: string | null; operational_status_changed_at?: string | null }[];
+  const rows = (data ?? []) as {
+    operational_status?: string | null;
+    operational_status_changed_at?: string | null;
+    updated_at?: string | null;
+  }[];
   if (rows.length === 0) return { in_queues: false };
   const anyOffline = rows.some((r) => r.operational_status === "offline");
   const status: ChatAgentOperationalStatus = anyOffline ? "offline" : "ready";
   const changedAts = rows
     .map((r) => r.operational_status_changed_at)
     .filter((x): x is string => typeof x === "string" && x.length > 0);
+  const updatedAts = rows
+    .map((r) => r.updated_at)
+    .filter((x): x is string => typeof x === "string" && x.length > 0);
+  const earliest = (xs: string[]) => xs.reduce((a, b) => (a < b ? a : b));
   const status_changed_at =
-    changedAts.length > 0 ? changedAts.reduce((a, b) => (a < b ? a : b)) : null;
+    changedAts.length > 0 ? earliest(changedAts) : updatedAts.length > 0 ? earliest(updatedAts) : null;
   return { in_queues: true, status, status_changed_at };
 }
 

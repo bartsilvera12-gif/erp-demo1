@@ -139,16 +139,17 @@ function tabClass(active: boolean) {
   }`;
 }
 
+/** Segmento seleccionado = claro y con anillo; el otro queda apagado (gris) para leer el estado de un vistazo. */
 function opPresenceToggleClass(active: boolean, variant: "ready" | "offline") {
   const base =
     "px-3 py-1.5 text-xs font-semibold rounded-md transition-all disabled:opacity-50 min-w-[6.75rem] text-center border";
   if (!active) {
-    return `${base} border-slate-300 bg-slate-200 text-slate-500 shadow-inner`;
+    return `${base} border-transparent bg-slate-200/70 text-slate-500 hover:bg-slate-200 hover:text-slate-600`;
   }
   if (variant === "ready") {
-    return `${base} border-emerald-700 bg-emerald-600 text-white shadow-md ring-2 ring-emerald-400/45`;
+    return `${base} border-emerald-600 bg-emerald-500 text-white shadow-sm ring-2 ring-emerald-300/80 z-[1]`;
   }
-  return `${base} border-slate-900 bg-slate-800 text-white shadow-md ring-2 ring-slate-500/35`;
+  return `${base} border-slate-600 bg-slate-700 text-white shadow-sm ring-2 ring-slate-400/50 z-[1]`;
 }
 
 function LiveElapsedLabel({ sinceIso }: { sinceIso: string | null }) {
@@ -161,10 +162,9 @@ function LiveElapsedLabel({ sinceIso }: { sinceIso: string | null }) {
   return <span className="tabular-nums font-medium">{formatWaitHuman(sinceIso)}</span>;
 }
 
+/** Misma lógica que el RPC: último mensaje del contacto sin respuesta humana posterior. */
 function inboxAwaitingHumanBadge(c: InboxConversation): boolean {
-  return Boolean(
-    c.awaiting_agent_reply_since && (c.human_taken_over || String(c.flow_status).toLowerCase() === "human")
-  );
+  return Boolean(c.awaiting_agent_reply_since);
 }
 
 function parseInboxFilters(sp: URLSearchParams): ChatInboxFilters | undefined {
@@ -589,7 +589,7 @@ export function ConversacionesClient({
       if (refreshed.in_queues) {
         setOpInQueues(true);
         setOpStatus(refreshed.status);
-        setOpSince(refreshed.status_changed_at);
+        setOpSince(refreshed.status_changed_at ?? new Date().toISOString());
       } else {
         setOpInQueues(false);
         setOpStatus(null);
@@ -1154,19 +1154,36 @@ export function ConversacionesClient({
             ) : null}
           </p>
         </div>
+        {mode === "inbox" && opPresenceLoaded && !opInQueues ? (
+          <div className="text-[10px] text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 max-w-[18rem] text-right leading-snug shrink-0">
+            No figurás como agente en ninguna cola: no se muestra el turno Disponible/Pausa. Pedí asignación en{" "}
+            <Link href="/configuracion/colas" className="font-semibold text-amber-950 underline-offset-2 hover:underline">
+              Configuración → Colas
+            </Link>
+            .
+          </div>
+        ) : null}
         {mode === "inbox" && opPresenceLoaded && opInQueues && opStatus !== null ? (
           <div
             className="flex flex-col items-end gap-1 shrink-0"
             role="group"
             aria-label="Disponible u en pausa para recibir chats nuevos por autoasignación"
           >
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Tu turno</span>
-              {opPresenceBusy ? (
-                <span className="text-[10px] font-medium text-sky-600 animate-pulse">Guardando…</span>
-              ) : null}
+            <div className="flex flex-col items-end gap-0.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Tu turno</span>
+                {opPresenceBusy ? (
+                  <span className="text-[10px] font-medium text-sky-600 animate-pulse">Guardando…</span>
+                ) : null}
+              </div>
+              <p className="text-[11px] font-bold text-slate-800 tabular-nums">
+                Estado actual:{" "}
+                <span className={opStatus === "ready" ? "text-emerald-700" : "text-slate-600"}>
+                  {opStatus === "ready" ? "Disponible" : "En pausa"}
+                </span>
+              </p>
             </div>
-            <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50/90 p-0.5">
+            <div className="flex items-center gap-0.5 rounded-lg border border-slate-300 bg-slate-100 p-0.5 shadow-inner">
               <button
                 type="button"
                 disabled={opPresenceBusy}
@@ -1191,14 +1208,16 @@ export function ConversacionesClient({
             <span className="text-[10px] text-slate-500 max-w-[15rem] text-right leading-tight hidden sm:block">
               Disponible = entrás en la rotación de nuevos chats. En pausa = no recibís asignaciones automáticas.
             </span>
-            {opSince ? (
-              <div className="text-[10px] text-slate-700 text-right leading-tight w-full">
-                <span className="text-slate-500">
-                  {opStatus === "ready" ? "Tiempo en Disponible" : "Tiempo en pausa"}:{" "}
-                </span>
+            <div className="text-[10px] text-slate-700 text-right leading-tight w-full">
+              <span className="text-slate-500">
+                {opStatus === "ready" ? "Tiempo en Disponible" : "Tiempo en pausa"}:{" "}
+              </span>
+              {opSince ? (
                 <LiveElapsedLabel sinceIso={opSince} />
-              </div>
-            ) : null}
+              ) : (
+                <span className="text-slate-400 italic">sin marca de tiempo en DB</span>
+              )}
+            </div>
           </div>
         ) : null}
       </div>
