@@ -145,7 +145,7 @@ export async function ensureWhatsappInboundCrmLeadPg(input: {
     }
 
     const advRes = await client.query(
-      `SELECT trim(coalesce(u.nombre, '') || ' ' || coalesce(u.apellido, '')) AS full_name,
+      `SELECT trim(coalesce(u.nombre::text, '')) AS full_name,
               u.email::text AS email
        FROM ${conv} c
        LEFT JOIN ${ag} a ON a.id = c.assigned_agent_id AND a.empresa_id = c.empresa_id

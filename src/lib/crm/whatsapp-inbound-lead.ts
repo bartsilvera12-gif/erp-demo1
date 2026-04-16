@@ -88,14 +88,13 @@ async function resolveAssignedAdvisorDisplayName(
   const catalog = createServiceRoleClient();
   const { data: u, error: uErr } = await catalog
     .from("usuarios")
-    .select("nombre, apellido, email")
+    .select("nombre, email")
     .eq("id", usuarioId)
     .maybeSingle();
   if (uErr || !u) return null;
-  const row = u as { nombre?: string | null; apellido?: string | null; email?: string | null };
-  const parts = [row.nombre?.trim(), row.apellido?.trim()].filter(Boolean);
-  const full = parts.join(" ").trim();
-  if (full) return full;
+  const row = u as { nombre?: string | null; email?: string | null };
+  const nom = row.nombre?.trim();
+  if (nom) return nom;
   return row.email?.trim() || null;
 }
 
