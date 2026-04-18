@@ -9,7 +9,7 @@ import {
   removeSupervisionLink,
   type SupervisionLinkRow,
 } from "@/lib/chat/supervision-admin-actions";
-import { listUsuariosForQueuePick } from "@/lib/chat/queue-admin-actions";
+import { listAgentesForEquiposPick, listSupervisoresForEquiposPick } from "@/lib/chat/queue-admin-actions";
 import type { UsuarioPickRow } from "@/lib/chat/queue-admin-repo";
 
 function hasOmnichannelFromModuleAccess(body: {
@@ -29,7 +29,8 @@ function labelUsuario(u: UsuarioPickRow): string {
 
 export default function OmnicanalEquiposPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
-  const [usuarios, setUsuarios] = useState<UsuarioPickRow[]>([]);
+  const [supervisores, setSupervisores] = useState<UsuarioPickRow[]>([]);
+  const [agentes, setAgentes] = useState<UsuarioPickRow[]>([]);
   const [rows, setRows] = useState<SupervisionLinkRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,11 +51,14 @@ export default function OmnicanalEquiposPage() {
     }
   }, []);
 
-  const loadUsuarios = useCallback(async () => {
+  const loadSelectores = useCallback(async () => {
     try {
-      setUsuarios(await listUsuariosForQueuePick());
+      const [sup, ag] = await Promise.all([listSupervisoresForEquiposPick(), listAgentesForEquiposPick()]);
+      setSupervisores(sup);
+      setAgentes(ag);
     } catch {
-      setUsuarios([]);
+      setSupervisores([]);
+      setAgentes([]);
     }
   }, []);
 
@@ -73,10 +77,10 @@ export default function OmnicanalEquiposPage() {
 
   useEffect(() => {
     if (allowed) {
-      void loadUsuarios();
+      void loadSelectores();
       void load();
     }
-  }, [allowed, load, loadUsuarios]);
+  }, [allowed, load, loadSelectores]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -152,51 +156,82 @@ export default function OmnicanalEquiposPage() {
 
       <form onSubmit={(e) => void handleAdd(e)} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
         <h2 className="text-sm font-semibold text-slate-800">Nueva relación supervisor → agente</h2>
+        <p className="text-xs text-slate-500 leading-relaxed">
+          Supervisores: solo usuarios con perfil <strong className="text-slate-700">Supervisor</strong> en el ERP.
+          Agentes: solo perfil <strong className="text-slate-700">Usuario</strong> y asignados a al menos una cola en{" "}
+          <Link href="/configuracion/colas" className="font-semibold text-[#0EA5E9] hover:underline">
+            Colas y enrutamiento
+          </Link>
+          .
+        </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            Supervisor
-            <select
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
-              value={supervisorId}
-              onChange={(ev) => setSupervisorId(ev.target.value)}
-              required
-            >
-              <option value="">Elegí usuario…</option>
-              {usuarios.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {labelUsuario(u)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
-            Agente a cargo
-            <select
-              className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
-              value={agentId}
-              onChange={(ev) => setAgentId(ev.target.value)}
-              required
-            >
-              <option value="">Elegí usuario…</option>
-              {usuarios.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {labelUsuario(u)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Supervisor
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+                value={supervisorId}
+                onChange={(ev) => setSupervisorId(ev.target.value)}
+                required
+                disabled={supervisores.length === 0}
+              >
+                <option value="">{supervisores.length === 0 ? "Sin opciones" : "Elegí supervisor…"}</option>
+                {supervisores.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {labelUsuario(u)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {supervisores.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                No hay supervisores disponibles. El perfil del usuario en el ERP debe ser{" "}
+                <strong>Supervisor</strong> (desde Usuarios).
+              </p>
+            ) : null}
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Agente a cargo
+              <select
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm bg-white"
+                value={agentId}
+                onChange={(ev) => setAgentId(ev.target.value)}
+                required
+                disabled={agentes.length === 0}
+              >
+                <option value="">{agentes.length === 0 ? "Sin opciones" : "Elegí agente…"}</option>
+                {agentes.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {labelUsuario(u)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {agentes.length === 0 ? (
+              <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                No hay agentes disponibles con cola asignada. El usuario debe tener perfil{" "}
+                <strong>Usuario</strong> en el ERP y figurar como agente en una cola activa.
+              </p>
+            ) : null}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            disabled={saving}
+            disabled={
+              saving ||
+              supervisores.length === 0 ||
+              agentes.length === 0 ||
+              !supervisorId ||
+              !agentId
+            }
             className="rounded-xl bg-[#0EA5E9] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0284C7] disabled:opacity-50"
           >
             {saving ? "Guardando…" : "Asignar agente al supervisor"}
           </button>
           <p className="text-xs text-slate-400">
-            Se marca al usuario elegido como rol operativo <strong className="font-medium text-slate-600">supervisor</strong>{" "}
-            en la empresa.
+            Al guardar, el supervisor recibe también el rol operativo omnicanal correspondiente en la empresa.
           </p>
         </div>
       </form>
@@ -257,11 +292,8 @@ export default function OmnicanalEquiposPage() {
       </section>
 
       <p className="text-xs text-slate-400">
-        Ayuda: los agentes deben tener perfil en{" "}
-        <Link href="/configuracion/colas" className="text-[#0EA5E9] hover:underline">
-          Colas y enrutamiento
-        </Link>{" "}
-        para tomar conversaciones; la supervisión no reemplaza la membresía a colas.
+        Los agentes listados ya cumplen perfil Usuario + membresía en cola; la supervisión define la jerarquía de
+        visibilidad, no sustituye la configuración de colas.
       </p>
     </div>
   );

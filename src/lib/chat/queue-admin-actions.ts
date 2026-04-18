@@ -9,6 +9,8 @@ import {
   repoListAgentsForQueue,
   repoListQueueChannelLinks,
   repoListQueues,
+  repoListAgentesForEquiposPick,
+  repoListSupervisoresForEquiposPick,
   repoListUsuariosForQueuePick,
   repoRemoveQueueAgent,
   repoSaveQueue,
@@ -93,4 +95,14 @@ export async function removeQueueAgent(agentId: string): Promise<void> {
 
 export async function listUsuariosForQueuePick(): Promise<UsuarioPickRow[]> {
   return repoListUsuariosForQueuePick(await ctx());
+}
+
+/** Selector equipos: rol ERP supervisor. */
+export async function listSupervisoresForEquiposPick(): Promise<UsuarioPickRow[]> {
+  return repoListSupervisoresForEquiposPick(await ctx());
+}
+
+/** Selector equipos: rol ERP usuario + membresía activa en alguna cola (`chat_agents`). */
+export async function listAgentesForEquiposPick(): Promise<UsuarioPickRow[]> {
+  return repoListAgentesForEquiposPick(await ctx());
 }

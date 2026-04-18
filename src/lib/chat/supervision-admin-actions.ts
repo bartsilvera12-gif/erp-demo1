@@ -1,11 +1,64 @@
 "use server";
 
+import type { AppSupabaseClient } from "@/lib/supabase/schema";
 import { requireEmpresaTenantServiceRole } from "@/lib/chat/empresa-tenant-service-role";
 import {
   getOmnicanalScope,
   isOmnicanalAdminScope,
   shouldBypassOmnicanalConversationScope,
 } from "@/lib/chat/omnicanal-scope";
+
+function normalizeErpRol(rol: string | null | undefined): string {
+  return (rol ?? "").trim().toLowerCase();
+}
+
+async function validateSupervisorErpProfile(
+  catalogSr: AppSupabaseClient,
+  empresaId: string,
+  usuarioId: string
+): Promise<void> {
+  const { data, error } = await catalogSr
+    .from("usuarios")
+    .select("rol")
+    .eq("id", usuarioId.trim())
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Supervisor no encontrado en la empresa.");
+  if (normalizeErpRol((data as { rol?: string }).rol) !== "supervisor") {
+    throw new Error("Solo usuarios con perfil Supervisor en el ERP pueden ser supervisores.");
+  }
+}
+
+async function validateAgentErpProfileAndQueue(
+  supabase: AppSupabaseClient,
+  catalogSr: AppSupabaseClient,
+  empresaId: string,
+  usuarioId: string
+): Promise<void> {
+  const { data, error } = await catalogSr
+    .from("usuarios")
+    .select("rol")
+    .eq("id", usuarioId.trim())
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Agente no encontrado en la empresa.");
+  if (normalizeErpRol((data as { rol?: string }).rol) !== "usuario") {
+    throw new Error("Solo usuarios con perfil Usuario en el ERP pueden ser agentes en esta relación.");
+  }
+
+  const { data: rows, error: e2 } = await supabase
+    .from("chat_agents")
+    .select("id, is_active")
+    .eq("empresa_id", empresaId)
+    .eq("usuario_id", usuarioId.trim());
+  if (e2) throw new Error(e2.message);
+  const ok = (rows ?? []).some((r) => (r as { is_active?: boolean }).is_active !== false);
+  if (!ok) {
+    throw new Error("El agente debe estar asignado a al menos una cola omnicanal activa.");
+  }
+}
 
 async function assertManageSupervision() {
   const ctx = await requireEmpresaTenantServiceRole();
@@ -80,11 +133,14 @@ export async function fetchSupervisionLinks(): Promise<SupervisionLinkRow[]> {
 }
 
 export async function linkAgentToSupervisor(supervisorUsuarioId: string, agentUsuarioId: string): Promise<void> {
-  const { supabase, empresa_id } = await assertManageSupervision();
+  const { supabase, catalogSr, empresa_id } = await assertManageSupervision();
   const sid = supervisorUsuarioId.trim();
   const aid = agentUsuarioId.trim();
   if (!sid || !aid) throw new Error("Seleccioná supervisor y agente.");
   if (sid === aid) throw new Error("El supervisor y el agente no pueden ser la misma persona.");
+
+  await validateSupervisorErpProfile(catalogSr, empresa_id, sid);
+  await validateAgentErpProfileAndQueue(supabase, catalogSr, empresa_id, aid);
 
   const { error: roleErr } = await supabase.from("chat_empresa_operator_roles").upsert(
     {

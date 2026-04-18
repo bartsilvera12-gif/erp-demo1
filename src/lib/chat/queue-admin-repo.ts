@@ -380,6 +380,65 @@ export async function repoListUsuariosForQueuePick(ctx: QueueAdminTenantContext)
   }));
 }
 
+function mapUsuarioPickRows(data: unknown[]): UsuarioPickRow[] {
+  return data
+    .map((row) => {
+      const u = row as { id?: string; nombre?: string | null; email?: string | null };
+      return {
+        id: String(u.id ?? "").trim(),
+        nombre: (u.nombre?.trim() || u.email || "—") as string,
+        email: (u.email ?? "") as string,
+      };
+    })
+    .filter((x) => x.id.length > 0);
+}
+
+/**
+ * Equipos y supervisión: solo perfiles ERP `usuarios.rol = supervisor` (catálogo).
+ */
+export async function repoListSupervisoresForEquiposPick(ctx: QueueAdminTenantContext): Promise<UsuarioPickRow[]> {
+  const { data, error } = await ctx.catalogSr
+    .from("usuarios")
+    .select("id, nombre, email")
+    .eq("empresa_id", ctx.empresa_id)
+    .eq("estado", "activo")
+    .eq("rol", "supervisor")
+    .order("nombre", { ascending: true });
+  if (error) throw new Error(error.message);
+  return mapUsuarioPickRows(data ?? []);
+}
+
+/**
+ * Equipos y supervisión: solo `usuarios.rol = usuario` con al menos una membresía activa en `chat_agents`.
+ */
+export async function repoListAgentesForEquiposPick(ctx: QueueAdminTenantContext): Promise<UsuarioPickRow[]> {
+  const { data: agentRows, error: e1 } = await ctx.supabase
+    .from("chat_agents")
+    .select("usuario_id, is_active")
+    .eq("empresa_id", ctx.empresa_id);
+  if (e1) throw new Error(e1.message);
+
+  const usuarioIds = [
+    ...new Set(
+      (agentRows ?? [])
+        .filter((r) => (r as { is_active?: boolean }).is_active !== false)
+        .map((r) => String((r as { usuario_id: string }).usuario_id))
+    ),
+  ];
+  if (usuarioIds.length === 0) return [];
+
+  const { data, error } = await ctx.catalogSr
+    .from("usuarios")
+    .select("id, nombre, email")
+    .eq("empresa_id", ctx.empresa_id)
+    .eq("estado", "activo")
+    .eq("rol", "usuario")
+    .in("id", usuarioIds)
+    .order("nombre", { ascending: true });
+  if (error) throw new Error(error.message);
+  return mapUsuarioPickRows(data ?? []);
+}
+
 export async function repoListQueueClosureTaxonomy(
   ctx: QueueAdminTenantContext,
   queueId: string
