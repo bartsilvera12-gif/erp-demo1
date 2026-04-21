@@ -46,7 +46,7 @@ export function isActivelyBotHandledConversation(
 ): boolean {
   if (debugForceInboxLikeTrue()) {
     const conversationId = String((conv as { id?: string }).id ?? "").trim();
-    console.log("[BOT-DEBUG]", {
+    console.info("[bot-routing]", "conversation_not_bot_tab", {
       conversation_id: conversationId,
       flow_status: String((conv as { flow_status?: string | null }).flow_status ?? "").trim(),
       flow_code: String((conv as { flow_code?: string | null }).flow_code ?? "").trim(),
@@ -54,7 +54,7 @@ export function isActivelyBotHandledConversation(
         (conv as { active_flow_session_id?: string | null }).active_flow_session_id ?? ""
       ).trim(),
       hasActiveSession: false,
-      result: false,
+      reason: "env_CHAT_BOT_IF_TRUE_RETURN_FALSE",
       forced: true,
     });
     return false;
@@ -81,14 +81,32 @@ export function isActivelyBotHandledConversation(
     }
   }
 
-  console.log("[BOT-DEBUG]", {
-    conversation_id: conversationId,
-    flow_status: flowStatus,
-    flow_code: flowCode,
-    active_flow_session_id: sessionId,
-    hasActiveSession,
-    result,
-  });
+  if (!result) {
+    const reason =
+      humanTaken || flowStatus === "human"
+        ? "human_mode"
+        : !flowCode
+          ? "missing_flow_code"
+          : !activeFlowCodeSet.has(flowCode)
+            ? "flow_not_in_active_whatsapp_catalog"
+            : !sessionId
+              ? "missing_active_flow_session_id"
+              : !sess
+                ? "session_row_not_loaded"
+                : sess.status !== "active"
+                  ? "session_not_active"
+                  : sess.conversation_id !== conversationId || sess.flow_code !== flowCode
+                    ? "session_mismatch"
+                    : "unknown";
+    console.info("[bot-routing]", "conversation_not_bot_tab", {
+      conversation_id: conversationId,
+      flow_status: flowStatus,
+      flow_code: flowCode,
+      active_flow_session_id: sessionId || null,
+      hasActiveSession,
+      reason,
+    });
+  }
 
   return result;
 }

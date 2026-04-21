@@ -180,11 +180,42 @@ export async function persistInboundChatMessageAndBump(
   const bumpUnread =
     !fromMe && String(senderType || "contact").toLowerCase() === "contact";
 
+  const { data: prevConv } = await supabase
+    .from("chat_conversations")
+    .select("flow_code, flow_current_node")
+    .eq("id", conversationId)
+    .eq("empresa_id", empresaId)
+    .maybeSingle();
+
+  let nextFlowCode = conversationState.flow_code ?? null;
+  let nextFlowNode = conversationState.flow_current_node ?? null;
+  const prevRow = prevConv as { flow_code?: string | null; flow_current_node?: string | null } | null;
+  if (
+    nextFlowCode === null &&
+    typeof prevRow?.flow_code === "string" &&
+    prevRow.flow_code.trim() !== "" &&
+    !(conversationState.human_taken_over ?? false) &&
+    String(conversationState.flow_status ?? "bot").trim() !== "human"
+  ) {
+    nextFlowCode = prevRow.flow_code;
+    console.warn("[bot-routing]", "persist_guard_kept_flow_code_from_db", { conversationId });
+  }
+  if (
+    nextFlowNode === null &&
+    typeof prevRow?.flow_current_node === "string" &&
+    prevRow.flow_current_node.trim() !== "" &&
+    !(conversationState.human_taken_over ?? false) &&
+    String(conversationState.flow_status ?? "bot").trim() !== "human"
+  ) {
+    nextFlowNode = prevRow.flow_current_node;
+    console.warn("[bot-routing]", "persist_guard_kept_flow_node_from_db", { conversationId });
+  }
+
   await supabase
     .from("chat_conversations")
     .update({
-      flow_code: conversationState.flow_code ?? null,
-      flow_current_node: conversationState.flow_current_node ?? null,
+      flow_code: nextFlowCode,
+      flow_current_node: nextFlowNode,
       flow_status: conversationState.flow_status ?? "bot",
       human_taken_over: conversationState.human_taken_over ?? false,
       last_message_at: timestampIso,

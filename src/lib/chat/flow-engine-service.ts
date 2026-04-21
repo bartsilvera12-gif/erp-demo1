@@ -1086,7 +1086,14 @@ export function createFlowEngine(ctx: FlowEngineContext) {
           accessToken: ctxSend.token,
           imageUrl: imageFromLegacyText,
         });
-        if (!send.ok) return { ok: false, error: send.error };
+        if (!send.ok) {
+          console.warn("[flow-send]", "whatsapp_image_failed_legacy_media_node", {
+            conversationId: state.id,
+            node_code: node.node_code,
+            error: send.error,
+          });
+          return { ok: false, error: send.error };
+        }
 
         await persistOutgoingMessage({
           conversation: state,
@@ -1181,7 +1188,15 @@ export function createFlowEngine(ctx: FlowEngineContext) {
           imageUrl,
           caption,
         });
-        if (!send.ok) return { ok: false, error: send.error };
+        if (!send.ok) {
+          console.warn("[flow-send]", "whatsapp_image_failed_block", {
+            conversationId: state.id,
+            node_code: node.node_code,
+            error: send.error,
+            imageUrlPreview: imageUrl.slice(0, 96),
+          });
+          return { ok: false, error: send.error };
+        }
         const imageLabel = caption ? `Imagen enviada: ${caption}` : "Imagen enviada";
         await persistOutgoingMessage({
           conversation: state,

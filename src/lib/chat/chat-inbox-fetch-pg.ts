@@ -42,7 +42,12 @@ async function pgActiveFlowCodes(pool: Pool, schema: string, empresaId: string):
     const qt = quoteSchemaTable(schema, "chat_flows");
     const q = `
       SELECT flow_code::text AS flow_code FROM ${qt}
-      WHERE empresa_id = $1::uuid AND COALESCE(activo, false) = true
+      WHERE empresa_id = $1::uuid
+        AND COALESCE(activo, false) = true
+        AND (
+          trim(coalesce(channel::text, '')) = ''
+          OR lower(trim(coalesce(channel::text, ''))) = 'whatsapp'
+        )
     `;
     const r = await pool.query(q, [empresaId]);
     return new Set(
@@ -50,7 +55,12 @@ async function pgActiveFlowCodes(pool: Pool, schema: string, empresaId: string):
         .map((row: { flow_code?: string }) => String(row.flow_code ?? "").trim())
         .filter(Boolean)
     );
-  } catch {
+  } catch (e) {
+    console.warn("[bot-routing]", "pgActiveFlowCodes_failed", {
+      empresa_id: empresaId,
+      schema,
+      message: e instanceof Error ? e.message : String(e),
+    });
     return new Set();
   }
 }

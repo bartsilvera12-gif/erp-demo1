@@ -13,6 +13,7 @@ import {
   syncOmnichannelRouteForWhatsappChannel,
 } from "@/lib/chat/omnichannel-route-sync";
 import { createWhatsappConversationWithActiveFlow } from "@/lib/chat/whatsapp-conversation-bootstrap";
+import { ensureActiveFlowSessionForConversation } from "@/lib/chat/flow-session-service";
 import {
   resolveOutboundTextContextFromConversationId,
   sendOutboundTextMessage,
@@ -812,6 +813,21 @@ export async function processInboundWebhookValue(
         flow_status: convFlowStatus,
       };
 
+      if (convFlow?.trim() && !convHuman && convFlowStatus !== "human") {
+        const ensuredSid = await ensureActiveFlowSessionForConversation(
+          supabase,
+          empresaId,
+          conversationId,
+          convFlow
+        );
+        console.info("[bot-routing]", "ensure_session_pre_assign", {
+          conversationId,
+          empresa_id: empresaId,
+          flow_code: convFlow.trim(),
+          active_flow_session_id: ensuredSid,
+        });
+      }
+
       const logW = "[webhook/whatsapp][inbound]";
       console.info(logW, "message_received", {
         waMessageId: waMid,
@@ -866,6 +882,33 @@ export async function processInboundWebhookValue(
 
       const flowEngine = createFlowEngine({ supabase });
 
+      const { data: convPersistSnap } = await supabase
+        .from("chat_conversations")
+        .select(
+          "flow_code, flow_current_node, flow_status, human_taken_over, unread_count, status"
+        )
+        .eq("id", conversationId)
+        .eq("empresa_id", empresaId)
+        .maybeSingle();
+
+      const snap =
+        convPersistSnap as null | {
+          flow_code?: string | null;
+          flow_current_node?: string | null;
+          flow_status?: string | null;
+          human_taken_over?: boolean | null;
+          unread_count?: number | null;
+          status?: string | null;
+        };
+
+      console.info("[bot-routing]", "persist_flow_snapshot_merge", {
+        conversationId,
+        snap_flow_code: snap?.flow_code ?? null,
+        snap_active_node: snap?.flow_current_node ?? null,
+        memory_flow_code: (existingConv as { flow_code?: string | null }).flow_code ?? null,
+        memory_node: (existingConv as { flow_current_node?: string | null }).flow_current_node ?? null,
+      });
+
       console.info(WH_MSG, "persistInbound_start", { conversationId, wa_mid: waMid });
       const persistInbound = await persistInboundChatMessageAndBump({
         supabase,
@@ -880,14 +923,17 @@ export async function processInboundWebhookValue(
         fromMe: false,
         senderType: "contact",
         conversationState: {
-          flow_code: (existingConv as { flow_code?: string | null }).flow_code ?? null,
-          flow_current_node: (existingConv as { flow_current_node?: string | null }).flow_current_node ?? null,
-          flow_status: (existingConv as { flow_status?: string | null }).flow_status ?? "bot",
+          flow_code: snap?.flow_code ?? (existingConv as { flow_code?: string | null }).flow_code ?? null,
+          flow_current_node:
+            snap?.flow_current_node ??
+            (existingConv as { flow_current_node?: string | null }).flow_current_node ??
+            null,
+          flow_status: (existingConv as { flow_status?: string | null }).flow_status ?? snap?.flow_status ?? "bot",
           human_taken_over: Boolean(
             (existingConv as { human_taken_over?: boolean | null }).human_taken_over
           ),
-          unread_count: (existingConv.unread_count as number) ?? 0,
-          status: existingConv.status as string,
+          unread_count: (snap?.unread_count as number) ?? (existingConv.unread_count as number) ?? 0,
+          status: (snap?.status as string) ?? (existingConv.status as string),
         },
       });
 
