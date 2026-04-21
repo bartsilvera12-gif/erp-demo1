@@ -838,8 +838,11 @@ export default function FlowEditorPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap justify-between gap-3 items-start">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Editor de flujo: {flowCode}</h1>
-          <p className="text-sm text-slate-500">Nodos + opciones de botones + preparación CRM</p>
+          <h1 className="text-2xl font-bold text-slate-800">Editor de flujo conversacional</h1>
+          <p className="text-sm text-slate-500 font-mono mt-0.5">{flowCode}</p>
+          <p className="text-sm text-slate-600 mt-1">
+            Pasos del bot, mensajes, botones o listas, capturas y el siguiente paso en WhatsApp.
+          </p>
         </div>
         <Link
           href="/configuracion/conversaciones/flujos"
@@ -855,77 +858,6 @@ export default function FlowEditorPage() {
         </div>
       )}
       {success && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2">{success}</div>}
-
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Sorteo asociado</h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Si elegís un sorteo, al recibir el comprobante por WhatsApp se puede crear la orden y los cupones (módulo Sorteos).
-            </p>
-          </div>
-          {flowSorteoId ? (
-            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-              Vinculado: {flowSorteoNombre || "Sorteo"}
-            </span>
-          ) : (
-            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200">
-              Sin sorteo — no se generan órdenes desde este flujo
-            </span>
-          )}
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[220px]">
-            <label className="block text-xs text-slate-500 mb-1">Sorteo asociado</label>
-            <select
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
-              value={sorteoDraft}
-              onChange={(e) => setSorteoDraft(e.target.value)}
-            >
-              <option value="">Ninguno</option>
-              {sorteosOptions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
-          <button
-            type="button"
-            disabled={savingSorteoLink}
-            onClick={() => void saveSorteoAssociation()}
-            className="bg-slate-800 hover:bg-slate-900 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            {savingSorteoLink ? "Guardando…" : "Guardar sorteo"}
-          </button>
-        </div>
-        <div className="mt-4 space-y-2">
-          <label className="block text-xs text-slate-500">
-            Mensaje si faltan datos para registrar el sorteo (WhatsApp). Vacío = texto por defecto del
-            sistema.
-          </label>
-          <textarea
-            className="w-full min-h-[88px] rounded-md border border-slate-200 px-3 py-2 text-sm"
-            value={sorteoIncompleteMsgDraft}
-            onChange={(e) => setSorteoIncompleteMsgDraft(e.target.value)}
-            placeholder="Ej.: No pudimos registrar esta compra. Tocá de nuevo tu opción y enviá el comprobante."
-            maxLength={4000}
-          />
-          <button
-            type="button"
-            className="rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
-            disabled={savingSorteoIncompleteMsg}
-            onClick={() => void saveSorteoIncompleteMessage()}
-          >
-            {savingSorteoIncompleteMsg ? "Guardando…" : "Guardar mensaje"}
-          </button>
-        </div>
-        {sorteosOptions.length === 0 && (
-          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
-            No hay sorteos en la empresa. Creá uno en el módulo Sorteos para poder asociarlo.
-          </p>
-        )}
-      </div>
 
       <form onSubmit={createNode} className="bg-white border border-slate-200 rounded-xl p-4 flex flex-wrap gap-3 items-end shadow-sm">
         <div className="flex-1 min-w-[180px]">
@@ -1819,6 +1751,79 @@ export default function FlowEditorPage() {
           })}
         </div>
       )}
+
+      <details className="bg-white border border-slate-200 rounded-xl shadow-sm group">
+        <summary className="cursor-pointer list-none px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-sm font-semibold text-slate-800 hover:bg-slate-50/80 rounded-xl [&::-webkit-details-marker]:hidden">
+          <span className="inline-flex items-center gap-2">
+            <span className="text-slate-400 group-open:rotate-90 transition-transform">▸</span>
+            Integración con sorteos
+            <span className="font-normal text-slate-500">(opcional)</span>
+          </span>
+          {flowSorteoId ? (
+            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 max-w-[min(100%,16rem)] truncate">
+              {flowSorteoNombre || "Vinculado"}
+            </span>
+          ) : (
+            <span className="text-xs text-slate-500">Sin vincular</span>
+          )}
+        </summary>
+        <div className="px-4 pb-4 pt-0 space-y-3 border-t border-slate-100">
+          <p className="text-xs text-slate-500">
+            Solo si usás el módulo Sorteos: al asociar un sorteo, al recibir el comprobante por WhatsApp se puede
+            generar la orden y los cupones. No afecta la edición de pasos de arriba.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-xs text-slate-500 mb-1">Sorteo vinculado al flujo</label>
+              <select
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+                value={sorteoDraft}
+                onChange={(e) => setSorteoDraft(e.target.value)}
+              >
+                <option value="">Ninguno</option>
+                {sorteosOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              disabled={savingSorteoLink}
+              onClick={() => void saveSorteoAssociation()}
+              className="bg-slate-800 hover:bg-slate-900 disabled:opacity-60 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              {savingSorteoLink ? "Guardando…" : "Guardar vínculo"}
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="block text-xs text-slate-500">
+              Mensaje si faltan datos para registrar la compra del sorteo (WhatsApp). Vacío = texto por defecto del sistema.
+            </label>
+            <textarea
+              className="w-full min-h-[88px] rounded-md border border-slate-200 px-3 py-2 text-sm"
+              value={sorteoIncompleteMsgDraft}
+              onChange={(e) => setSorteoIncompleteMsgDraft(e.target.value)}
+              placeholder="Ej.: No pudimos registrar esta compra. Tocá de nuevo tu opción y enviá el comprobante."
+              maxLength={4000}
+            />
+            <button
+              type="button"
+              className="rounded-md bg-slate-700 px-3 py-1.5 text-sm text-white disabled:opacity-50"
+              disabled={savingSorteoIncompleteMsg}
+              onClick={() => void saveSorteoIncompleteMessage()}
+            >
+              {savingSorteoIncompleteMsg ? "Guardando…" : "Guardar mensaje"}
+            </button>
+          </div>
+          {sorteosOptions.length === 0 && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5">
+              No hay sorteos en la empresa. Creá uno en el módulo Sorteos para poder asociarlo.
+            </p>
+          )}
+        </div>
+      </details>
     </div>
   );
 }
