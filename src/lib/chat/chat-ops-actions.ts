@@ -17,6 +17,15 @@ import { isMissingColumnError } from "@/lib/chat/postgres-column-error";
 import { isAgentSessionOnline } from "@/lib/chat/agent-presence";
 import { batchFetchOmnicanalOperatorRoles, type OmnicanalOperatorRole } from "@/lib/chat/omnicanal-supervision-read";
 import type { AppSupabaseClient } from "@/lib/supabase/schema";
+import {
+  pgCountUnassignedOpenWithScope,
+  pgGetMyAgentOperationalPresence,
+  pgListChatAgentsDirectoryWithContext,
+  pgLoadSupervisorAgentConversationStats,
+  pgSetMyAgentOperationalPresence,
+  pgTouchChatAgentInboxHeartbeat,
+} from "@/lib/chat/chat-agents-tenant-pg";
+import { logInvalidSchema } from "@/lib/chat/tenant-pg-trace";
 import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
 import { isLikelyUnexposedTenantChatSchema } from "@/lib/supabase/chat-data-schema";
 
@@ -850,7 +859,9 @@ async function loadMonitoringDashboardForContext(
 
 export async function fetchMonitoringDashboard(): Promise<MonitoringDashboard> {
   const ctx = await requireEmpresaTenantServiceRole();
-  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id);
+  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id, {
+    tenantDataSchema: ctx.dataSchema,
+  });
   const bypass = await shouldBypassOmnicanalConversationScope(ctx.catalogSr, ctx.usuario_id, scope);
   return loadMonitoringDashboardForContext(ctx, scope, bypass, {});
 }
@@ -876,7 +887,9 @@ export type ChatAgentDirectoryRow = {
 /** Agentes con nombre para reasignación y vistas de supervisor. */
 export async function listChatAgentsDirectory(): Promise<ChatAgentDirectoryRow[]> {
   const ctx = await requireEmpresaTenantServiceRole();
-  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id);
+  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id, {
+    tenantDataSchema: ctx.dataSchema,
+  });
   const bypass = await shouldBypassOmnicanalConversationScope(ctx.catalogSr, ctx.usuario_id, scope);
   return listChatAgentsDirectoryWithContext(ctx, scope, bypass);
 }
@@ -886,6 +899,18 @@ async function listChatAgentsDirectoryWithContext(
   scope: OmnicanalScope,
   bypass: boolean
 ): Promise<ChatAgentDirectoryRow[]> {
+  const poolPg = getChatPostgresPool();
+  const { dataSchema } = ctx;
+  if (poolPg && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    try {
+      const pgRows = await pgListChatAgentsDirectoryWithContext(poolPg, dataSchema, ctx, scope, bypass);
+      return pgRows as ChatAgentDirectoryRow[];
+    } catch (e) {
+      logInvalidSchema("listChatAgentsDirectoryWithContext_pg", dataSchema, e);
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
   const { supabase, catalogSr, empresa_id } = ctx;
 
   let aq = supabase
@@ -949,7 +974,10 @@ async function listChatAgentsDirectoryWithContext(
     error = second.error;
   }
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    logInvalidSchema("listChatAgentsDirectoryWithContext", ctx.dataSchema, error);
+    throw new Error(error.message);
+  }
 
   const rows = (data ?? []) as Record<string, unknown>[];
   const queueIds = [...new Set(rows.map((row) => row.queue_id as string).filter(Boolean))];
@@ -960,7 +988,10 @@ async function listChatAgentsDirectoryWithContext(
       .select("id, nombre")
       .eq("empresa_id", empresa_id)
       .in("id", queueIds);
-    if (qErr) throw new Error(qErr.message);
+    if (qErr) {
+      logInvalidSchema("listChatAgentsDirectoryWithContext.chat_queues", ctx.dataSchema, qErr);
+      throw new Error(qErr.message);
+    }
     queueNombreById = Object.fromEntries(
       (qrows ?? []).map((r) => [
         r.id as string,
@@ -1030,7 +1061,50 @@ async function loadSupervisorAgentLoadsWithContext(
   bypass: boolean,
   scopeConvCache: OmnicanalConversationScopeCache
 ): Promise<SupervisorAgentLoadRow[]> {
-  const { supabase, catalogSr, empresa_id } = ctx;
+  const poolPg = getChatPostgresPool();
+  const { dataSchema, empresa_id, supabase } = ctx;
+  if (poolPg && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    const agentsPg = await pgListChatAgentsDirectoryWithContext(poolPg, dataSchema, ctx, scope, bypass);
+    const agents = agentsPg as ChatAgentDirectoryRow[];
+    if (agents.length === 0) return [];
+
+    const roleByUsuario = await batchFetchOmnicanalOperatorRoles(
+      supabase,
+      empresa_id,
+      agents.map((a) => a.usuario_id)
+    );
+
+    const agentIds = agents.map((a) => a.id);
+    const counts = await pgLoadSupervisorAgentConversationStats(
+      poolPg,
+      dataSchema,
+      empresa_id,
+      scope,
+      bypass,
+      agentIds
+    );
+
+    const tally = new Map<string, number>();
+    const pendingFirst = new Map<string, number>();
+    for (const row of counts) {
+      const aid = row.assigned_agent_id as string | null;
+      if (!aid) continue;
+      tally.set(aid, (tally.get(aid) ?? 0) + 1);
+      const st = row.status;
+      const fh = row.first_human_response_at;
+      if ((st === "open" || st === "pending") && (fh == null || fh === "")) {
+        pendingFirst.set(aid, (pendingFirst.get(aid) ?? 0) + 1);
+      }
+    }
+
+    return agents.map((a) => ({
+      ...a,
+      active_conversations: tally.get(a.id) ?? 0,
+      pending_first_reply: pendingFirst.get(a.id) ?? 0,
+      omnicanal_role: roleByUsuario.get(a.usuario_id) ?? null,
+    }));
+  }
+
   const agents = await listChatAgentsDirectoryWithContext(ctx, scope, bypass);
   if (agents.length === 0) return [];
 
@@ -1060,7 +1134,10 @@ async function loadSupervisorAgentLoadsWithContext(
 
   const { data: counts, error } = await cq;
 
-  if (error) throw new Error(error.message);
+  if (error) {
+    logInvalidSchema("loadSupervisorAgentLoadsWithContext.conversations", ctx.dataSchema, error);
+    throw new Error(error.message);
+  }
 
   const tally = new Map<string, number>();
   const pendingFirst = new Map<string, number>();
@@ -1085,7 +1162,9 @@ async function loadSupervisorAgentLoadsWithContext(
 
 export async function fetchSupervisorAgentLoads(): Promise<SupervisorAgentLoadRow[]> {
   const ctx = await requireEmpresaTenantServiceRole();
-  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id);
+  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id, {
+    tenantDataSchema: ctx.dataSchema,
+  });
   const bypass = await shouldBypassOmnicanalConversationScope(ctx.catalogSr, ctx.usuario_id, scope);
   return loadSupervisorAgentLoadsWithContext(ctx, scope, bypass, {});
 }
@@ -1104,7 +1183,9 @@ export type MonitoreoPageData = {
 export async function fetchMonitoreoPageData(): Promise<MonitoreoPageData> {
   const t0 = Date.now();
   const ctx = await requireEmpresaTenantServiceRole();
-  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id);
+  const scope = await getOmnicanalScope(ctx.supabase, ctx.empresa_id, ctx.usuario_id, {
+    tenantDataSchema: ctx.dataSchema,
+  });
   const bypass = await shouldBypassOmnicanalConversationScope(ctx.catalogSr, ctx.usuario_id, scope);
   const scopeConvCache: OmnicanalConversationScopeCache = {};
   const tParallel = Date.now();
@@ -1131,9 +1212,16 @@ export async function fetchMonitoreoPageData(): Promise<MonitoreoPageData> {
 }
 
 export async function countUnassignedOpenConversations(): Promise<number> {
-  const { supabase, catalogSr, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
-  const scope = await getOmnicanalScope(supabase, empresa_id, usuario_id);
+  const { supabase, catalogSr, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
+  const scope = await getOmnicanalScope(supabase, empresa_id, usuario_id, {
+    tenantDataSchema: dataSchema,
+  });
   const bypass = await shouldBypassOmnicanalConversationScope(catalogSr, usuario_id, scope);
+
+  const poolCt = getChatPostgresPool();
+  if (poolCt && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    return pgCountUnassignedOpenWithScope(poolCt, dataSchema, empresa_id, scope, bypass);
+  }
 
   let q = supabase
     .from("chat_conversations")
@@ -1163,7 +1251,20 @@ export type MyAgentOperationalPresenceResult =
  * Si no participa en ninguna cola, `in_queues: false`.
  */
 export async function getMyAgentOperationalPresence(): Promise<MyAgentOperationalPresenceResult> {
-  const { supabase, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
+  const { supabase, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
+  const pool = getChatPostgresPool();
+  if (pool && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    const r = await pgGetMyAgentOperationalPresence(pool, dataSchema, empresa_id, usuario_id);
+    if (r.in_queues) {
+      return {
+        in_queues: true,
+        status: r.status,
+        status_changed_at: r.status_changed_at,
+      };
+    }
+    return { in_queues: false };
+  }
+
   let { data, error } = await supabase
     .from("chat_agents")
     .select("operational_status, operational_status_changed_at, updated_at")
@@ -1195,6 +1296,7 @@ export async function getMyAgentOperationalPresence(): Promise<MyAgentOperationa
     return { in_queues: true, status: "ready", status_changed_at: null };
   }
   if (error) {
+    logInvalidSchema("getMyAgentOperationalPresence", dataSchema, error);
     console.warn("[getMyAgentOperationalPresence] error no fatal:", error.message);
     return { in_queues: false };
   }
@@ -1241,8 +1343,10 @@ export async function fetchOmnicanalUxSummary(): Promise<{
   bypass_catalog_rol: boolean;
   team_agent_usuario_count: number;
 }> {
-  const { supabase, catalogSr, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
-  const scope = await getOmnicanalScope(supabase, empresa_id, usuario_id);
+  const { supabase, catalogSr, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
+  const scope = await getOmnicanalScope(supabase, empresa_id, usuario_id, {
+    tenantDataSchema: dataSchema,
+  });
   const bypass = await shouldBypassOmnicanalConversationScope(catalogSr, usuario_id, scope);
   return {
     omnicanal_role: scope.role,
@@ -1252,10 +1356,12 @@ export async function fetchOmnicanalUxSummary(): Promise<{
 }
 
 export async function getConversacionesInboxBootstrap(): Promise<ConversacionesInboxBootstrap> {
-  const { supabase, catalogSr, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
+  const { supabase, catalogSr, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
   const [presence, scope] = await Promise.all([
     getMyAgentOperationalPresence(),
-    getOmnicanalScope(supabase, empresa_id, usuario_id),
+    getOmnicanalScope(supabase, empresa_id, usuario_id, {
+      tenantDataSchema: dataSchema,
+    }),
   ]);
 
   let cabecera_insignia: InboxCabeceraInsignia = null;
@@ -1294,8 +1400,14 @@ export async function setMyAgentOperationalPresence(
   if (status !== "ready" && status !== "offline") {
     return { applied: false, reason: "Estado operativo inválido" };
   }
-  const { supabase, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
+  const { supabase, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
   const ts = new Date().toISOString();
+
+  const poolSm = getChatPostgresPool();
+  if (poolSm && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    return pgSetMyAgentOperationalPresence(poolSm, dataSchema, empresa_id, usuario_id, status, ts);
+  }
+
   let { error } = await supabase
     .from("chat_agents")
     .update({
@@ -1341,8 +1453,14 @@ export async function setMyAgentOperationalPresence(
 
 /** Ping de sesión inbox (monitoreo: última actividad real del agente). */
 export async function touchChatAgentInboxHeartbeat(): Promise<{ ok: boolean; reason?: string }> {
-  const { supabase, empresa_id, usuario_id } = await requireEmpresaTenantServiceRole();
+  const { supabase, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
   const ts = new Date().toISOString();
+
+  const poolHb = getChatPostgresPool();
+  if (poolHb && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    return pgTouchChatAgentInboxHeartbeat(poolHb, dataSchema, empresa_id, usuario_id, ts);
+  }
+
   const { error } = await supabase
     .from("chat_agents")
     .update({ last_heartbeat_at: ts, updated_at: ts })

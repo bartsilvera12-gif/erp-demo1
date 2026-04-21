@@ -1,9 +1,11 @@
 import type { AppSupabaseClient } from "@/lib/supabase/schema";
 import {
+  pgBatchFetchOperatorRolesRaw,
   pgFetchAgentsForSupervisorUsuarioIds,
   pgFetchOperatorRole,
   pgFetchQueueIdsForSupervisorUsuario,
 } from "@/lib/chat/omnicanal-supervision-pg";
+import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema";
 import { getChatPostgresPool } from "@/lib/supabase/chat-pg-pool";
 import { isLikelyUnexposedTenantChatSchema } from "@/lib/supabase/chat-data-schema";
 import { isInvalidPostgrestSchemaError } from "@/lib/chat/postgrest-schema-error";
@@ -164,6 +166,18 @@ export async function batchFetchOmnicanalOperatorRoles(
 ): Promise<Map<string, OmnicanalOperatorRole>> {
   const uniq = [...new Set(usuarioIds.map((id) => String(id ?? "").trim()).filter(Boolean))];
   if (uniq.length === 0) return new Map();
+
+  const tenantSchema = await fetchDataSchemaForEmpresaId(empresaId);
+  const pool = getChatPostgresPool();
+  if (pool && isLikelyUnexposedTenantChatSchema(tenantSchema)) {
+    const raw = await pgBatchFetchOperatorRolesRaw(pool, tenantSchema, empresaId, uniq);
+    const m = new Map<string, OmnicanalOperatorRole>();
+    for (const [uid, roleStr] of raw) {
+      const r = asRole(roleStr);
+      if (uid && r) m.set(uid, r);
+    }
+    return m;
+  }
 
   const { data, error } = await supabase
     .from("chat_empresa_operator_roles")

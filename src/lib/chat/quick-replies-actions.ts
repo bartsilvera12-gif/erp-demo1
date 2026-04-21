@@ -1,6 +1,9 @@
 "use server";
 
+import { pgChannelBelongsToEmpresa, pgListActiveQuickRepliesForChannel } from "@/lib/chat/chat-quick-replies-pg";
 import { requireEmpresaTenantServiceRole } from "@/lib/chat/empresa-tenant-service-role";
+import { getChatPostgresPool } from "@/lib/supabase/chat-pg-pool";
+import { isLikelyUnexposedTenantChatSchema } from "@/lib/supabase/chat-data-schema";
 
 export type ChannelQuickReplyRow = {
   id: string;
@@ -31,9 +34,18 @@ async function assertChannelBelongsToEmpresa(
 
 /** Listado para inbox: solo activas, ordenadas. */
 export async function listActiveQuickRepliesForChannel(channelId: string): Promise<ChannelQuickReplyRow[]> {
-  const { supabase, empresa_id } = await requireEmpresaTenantServiceRole();
+  const { supabase, empresa_id, dataSchema } = await requireEmpresaTenantServiceRole();
   const cid = channelId.trim();
   if (!cid) return [];
+
+  const pool = getChatPostgresPool();
+  if (pool && isLikelyUnexposedTenantChatSchema(dataSchema)) {
+    const ok = await pgChannelBelongsToEmpresa(pool, dataSchema, empresa_id, cid);
+    if (!ok) throw new Error("Canal no encontrado o sin permiso.");
+    const rows = await pgListActiveQuickRepliesForChannel(pool, dataSchema, empresa_id, cid);
+    return rows as ChannelQuickReplyRow[];
+  }
+
   await assertChannelBelongsToEmpresa(supabase, empresa_id, cid);
 
   const { data, error } = await supabase

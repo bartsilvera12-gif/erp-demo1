@@ -68,6 +68,36 @@ export async function pgFetchAgentsForSupervisorUsuarioIds(
   }
 }
 
+/** Filas batch en `chat_empresa_operator_roles` (usuario_id → role texto). */
+export async function pgBatchFetchOperatorRolesRaw(
+  pool: Pool,
+  schema: string,
+  empresaId: string,
+  usuarioIds: string[]
+): Promise<Map<string, string>> {
+  const uniq = [...new Set(usuarioIds.map((id) => String(id ?? "").trim()).filter(Boolean))];
+  const out = new Map<string, string>();
+  if (uniq.length === 0) return out;
+
+  const qt = quoteSchemaTable(schema, "chat_empresa_operator_roles");
+  try {
+    const q = `
+      SELECT usuario_id::text AS uid, role::text AS role
+      FROM ${qt}
+      WHERE empresa_id = $1::uuid AND usuario_id = ANY($2::uuid[])
+    `;
+    const r = await pool.query(q, [empresaId, uniq]);
+    for (const row of r.rows ?? []) {
+      const uid = String((row as { uid?: string }).uid ?? "").trim();
+      const role = String((row as { role?: string }).role ?? "").trim();
+      if (uid && role) out.set(uid, role);
+    }
+  } catch {
+    /* tabla ausente */
+  }
+  return out;
+}
+
 export async function pgUsuarioTieneChatAgentsRow(
   pool: Pool,
   schema: string,

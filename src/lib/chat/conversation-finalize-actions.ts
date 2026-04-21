@@ -7,6 +7,9 @@ import {
   isFallbackClosureStateId,
 } from "@/lib/chat/chat-closure-fallback";
 import { requireEmpresaTenantServiceRole } from "@/lib/chat/empresa-tenant-service-role";
+import type { Pool } from "pg";
+import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
+import { isLikelyUnexposedTenantChatSchema } from "@/lib/supabase/chat-data-schema";
 
 export type FinalizeOptionState = {
   id: string;
@@ -42,11 +45,85 @@ function emergencyModalFallbackOptions(): FinalizeOptionsResult {
   };
 }
 
+async function loadFinalizeOptionsFromPg(
+  pool: Pool,
+  schema: string,
+  empresaId: string,
+  conversationId: string
+): Promise<FinalizeOptionsResult> {
+  const convT = quoteSchemaTable(schema, "chat_conversations");
+  try {
+    const cr = await pool.query(
+      `SELECT queue_id::text, status::text FROM ${convT}
+       WHERE id = $1::uuid AND empresa_id = $2::uuid LIMIT 1`,
+      [conversationId, empresaId]
+    );
+    const row = cr.rows?.[0] as { queue_id?: string | null; status?: string | null } | undefined;
+    if (!row) return emergencyModalFallbackOptions();
+    if (String(row.status ?? "").toLowerCase() === "closed") {
+      throw new Error("La conversación ya está finalizada");
+    }
+    const qid = row.queue_id?.trim() || null;
+    if (!qid) {
+      return fallbackOptions();
+    }
+
+    const stT = quoteSchemaTable(schema, "chat_queue_closure_states");
+    const sr = await pool.query(
+      `SELECT id::text, label::text FROM ${stT}
+       WHERE empresa_id = $1::uuid AND queue_id = $2::uuid AND COALESCE(is_active, true) = true
+       ORDER BY sort_order ASC NULLS LAST`,
+      [empresaId, qid]
+    );
+    const st = (sr.rows ?? []) as { id: string; label: string }[];
+    if (st.length === 0) {
+      return fallbackOptions();
+    }
+
+    const ids = st.map((x) => x.id);
+    const subT = quoteSchemaTable(schema, "chat_queue_closure_substates");
+    const subr = await pool.query(
+      `SELECT id::text, closure_state_id::text, label::text FROM ${subT}
+       WHERE empresa_id = $1::uuid AND closure_state_id = ANY($2::uuid[]) AND COALESCE(is_active, true) = true
+       ORDER BY sort_order ASC NULLS LAST`,
+      [empresaId, ids]
+    );
+    const byState = new Map<string, { id: string; label: string }[]>();
+    for (const raw of subr.rows ?? []) {
+      const x = raw as { id?: string; closure_state_id?: string; label?: string };
+      const sid = String(x.closure_state_id ?? "").trim();
+      if (!sid) continue;
+      const arr = byState.get(sid) ?? [];
+      arr.push({ id: String(x.id ?? ""), label: String(x.label ?? "") });
+      byState.set(sid, arr);
+    }
+
+    return {
+      source: "queue",
+      states: st.map((s) => ({
+        id: s.id,
+        label: s.label,
+        substates: byState.get(s.id) ?? [],
+      })),
+    };
+  } catch (e) {
+    if (e instanceof Error && e.message.includes("finalizada")) throw e;
+    console.error("[loadFinalizeOptionsFromPg]", e);
+    return emergencyModalFallbackOptions();
+  }
+}
+
 export async function loadFinalizeOptionsForConversation(conversationId: string): Promise<FinalizeOptionsResult> {
-  const { supabase, empresa_id } = await requireEmpresaTenantServiceRole();
+  const ctx = await requireEmpresaTenantServiceRole();
   const id = conversationId.trim();
   if (!id) return emergencyModalFallbackOptions();
 
+  const pool = getChatPostgresPool();
+  if (pool && isLikelyUnexposedTenantChatSchema(ctx.dataSchema)) {
+    return loadFinalizeOptionsFromPg(pool, ctx.dataSchema, ctx.empresa_id, id);
+  }
+
+  const { supabase, empresa_id } = ctx;
   const { data: conv, error: cErr } = await supabase
     .from("chat_conversations")
     .select("id, queue_id, status")
