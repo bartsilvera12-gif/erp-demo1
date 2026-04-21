@@ -36,3 +36,20 @@ export async function createSupabaseServerClientForEmpresaData() {
   const schema = await resolveDataSchemaForCurrentUserServer();
   return createSupabaseServerClientWithDbSchema(schema);
 }
+
+/** `empresa_id` del usuario autenticado (catálogo `usuarios`). */
+export async function getEmpresaIdForCurrentUserServer(): Promise<string | null> {
+  const catalog = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await catalog.auth.getUser();
+  if (!user?.email) return null;
+
+  const { data: urows } = await catalog
+    .from("usuarios")
+    .select("empresa_id")
+    .eq("email", user.email)
+    .limit(1);
+
+  return (urows?.[0] as { empresa_id?: string } | undefined)?.empresa_id ?? null;
+}
