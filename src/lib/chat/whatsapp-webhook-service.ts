@@ -6,6 +6,8 @@ import { createFlowEngine } from "@/lib/chat/flow-engine-service";
 import { flowTrace } from "@/lib/chat/flow-trace-log";
 import { persistInboundChatMessageAndBump } from "@/lib/chat/incoming-message-service";
 import { assignConversation } from "@/lib/chat/assign-conversation-service";
+import { assignConversationPg } from "@/lib/chat/webhooks/assign-conversation-pg";
+import { createTenantPgChatSupabaseShim } from "@/lib/chat/tenant-pg-chat-supabase-shim";
 import {
   fetchOmnichannelRouteByMetaPhone,
   syncOmnichannelRouteForWhatsappChannel,
@@ -42,10 +44,25 @@ import {
   createServiceRoleClientWithDbSchema,
   fetchDataSchemaForEmpresaId,
 } from "@/lib/supabase/empresa-data-schema";
-import { getChatPostgresPool } from "@/lib/supabase/chat-pg-pool";
-import { SUPABASE_APP_SCHEMA, resolveEmpresaDataSchema } from "@/lib/supabase/schema";
+import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
+import {
+  SUPABASE_APP_SCHEMA,
+  resolveEmpresaDataSchema,
+  type AppSupabaseClient,
+} from "@/lib/supabase/schema";
+import type { Pool } from "pg";
+import {
+  assertAllowedChatDataSchema,
+  isLikelyUnexposedTenantChatSchema,
+} from "@/lib/supabase/chat-data-schema";
 
 export { normalizeWaPhone } from "@/lib/chat/wa-phone";
+
+const WH_RESOLVE = "[webhooks/whatsapp][resolve_channel]";
+const WH_CONTACT = "[webhooks/whatsapp][upsert_contact]";
+const WH_CONV = "[webhooks/whatsapp][upsert_conversation]";
+const WH_MSG = "[webhooks/whatsapp][insert_message]";
+const WH_FLOW = "[webhooks/whatsapp][flow_session]";
 
 function contactNameForWa(
   contacts: MetaWebhookValue["contacts"],
@@ -187,10 +204,36 @@ const BLOCKED_DATA_SCHEMA_NAMES = new Set(
   ["public", "pg_catalog", "information_schema"].map((s) => s.toLowerCase())
 );
 
+async function pgLoadWhatsappChannelById(
+  pool: Pool,
+  schemaRaw: string,
+  channelId: string,
+  empresaId: string
+): Promise<WhatsappChannelRow | null> {
+  const schema = assertAllowedChatDataSchema(schemaRaw);
+  const qt = quoteSchemaTable(schema, "chat_channels");
+  const r = await pool.query(
+    `SELECT id::text, empresa_id::text, meta_phone_number_id::text, activo
+     FROM ${qt}
+     WHERE id = $1::uuid AND empresa_id = $2::uuid
+     LIMIT 1`,
+    [channelId, empresaId]
+  );
+  const row = r.rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    empresa_id: String(row.empresa_id),
+    meta_phone_number_id: String(row.meta_phone_number_id ?? ""),
+    activo: row.activo === null || row.activo === undefined ? null : Boolean(row.activo),
+  };
+}
+
 async function findWhatsappChannelInTenantSchemas(
   catalogSupabase: SupabaseAdmin,
   phoneNumberId: string
 ): Promise<{ channel: WhatsappChannelRow; dataSupabase: SupabaseAdmin; dataSchema: string } | null> {
+  const pool = getChatPostgresPool();
   const { data: empresas, error } = await catalogSupabase
     .from("empresas")
     .select("id, data_schema")
@@ -209,6 +252,41 @@ async function findWhatsappChannelInTenantSchemas(
         empresa_id: e.id,
         schema,
       });
+      continue;
+    }
+
+    if (pool && isLikelyUnexposedTenantChatSchema(schema)) {
+      console.info(WH_RESOLVE, "scan_tenant_pg", { schema, empresa_id: e.id, phoneNumberId });
+      try {
+        const sch = assertAllowedChatDataSchema(schema);
+        const qt = quoteSchemaTable(sch, "chat_channels");
+        const r = await pool.query(
+          `SELECT id::text, empresa_id::text, meta_phone_number_id::text, activo
+           FROM ${qt}
+           WHERE meta_phone_number_id = $1 AND empresa_id = $2::uuid
+           LIMIT 1`,
+          [phoneNumberId, e.id]
+        );
+        const row = r.rows[0] as Record<string, unknown> | undefined;
+        if (row) {
+          const channel: WhatsappChannelRow = {
+            id: String(row.id),
+            empresa_id: String(row.empresa_id),
+            meta_phone_number_id: String(row.meta_phone_number_id ?? ""),
+            activo: row.activo === null || row.activo === undefined ? null : Boolean(row.activo),
+          };
+          return {
+            channel,
+            dataSupabase: catalogSupabase,
+            dataSchema: schema,
+          };
+        }
+      } catch (err) {
+        console.warn(WH_RESOLVE, "scan_tenant_pg_error", {
+          schema,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
       continue;
     }
 
@@ -261,37 +339,56 @@ export async function processInboundWebhookValue(
   let channel: WhatsappChannelRow | null = null;
 
   const routeRow = await fetchOmnichannelRouteByMetaPhone(catalogSupabase, phoneNumberId);
+  const pool = getChatPostgresPool();
 
   if (routeRow) {
     const r = routeRow;
     const schema = resolveEmpresaDataSchema(r.data_schema || null);
-    dataSupabase =
-      schema === SUPABASE_APP_SCHEMA
-        ? catalogSupabase
-        : (createServiceRoleClientWithDbSchema(schema) as SupabaseAdmin);
-    const { data: chT, error: errT } = await dataSupabase
-      .from("chat_channels")
-      .select("id, empresa_id, meta_phone_number_id, activo")
-      .eq("id", r.channel_id)
-      .maybeSingle();
-    if (errT) {
-      return {
-        ok: false,
-        processed: 0,
-        skipped: 0,
-        errors: [errT.message],
-      };
+    console.info(WH_RESOLVE, "omnichannel_route", { schema, channel_id: r.channel_id, empresa_id: r.empresa_id });
+
+    if (pool && isLikelyUnexposedTenantChatSchema(schema) && schema !== SUPABASE_APP_SCHEMA) {
+      const chPg = await pgLoadWhatsappChannelById(pool, schema, r.channel_id, r.empresa_id);
+      if (!chPg || chPg.empresa_id !== r.empresa_id) {
+        return {
+          ok: false,
+          processed: 0,
+          skipped: 0,
+          errors: [
+            "Ruta omnicanal inconsistente: canal no encontrado en Postgres o empresa distinta (tenant no expuesto).",
+          ],
+        };
+      }
+      channel = chPg;
+      dataSupabase = catalogSupabase;
+    } else {
+      dataSupabase =
+        schema === SUPABASE_APP_SCHEMA
+          ? catalogSupabase
+          : (createServiceRoleClientWithDbSchema(schema) as SupabaseAdmin);
+      const { data: chT, error: errT } = await dataSupabase
+        .from("chat_channels")
+        .select("id, empresa_id, meta_phone_number_id, activo")
+        .eq("id", r.channel_id)
+        .maybeSingle();
+      if (errT) {
+        return {
+          ok: false,
+          processed: 0,
+          skipped: 0,
+          errors: [errT.message],
+        };
+      }
+      const row = chT as WhatsappChannelRow | null;
+      if (!row || row.empresa_id !== r.empresa_id) {
+        return {
+          ok: false,
+          processed: 0,
+          skipped: 0,
+          errors: ["Ruta omnicanal inconsistente: canal no encontrado o empresa distinta."],
+        };
+      }
+      channel = row;
     }
-    const row = chT as WhatsappChannelRow | null;
-    if (!row || row.empresa_id !== r.empresa_id) {
-      return {
-        ok: false,
-        processed: 0,
-        skipped: 0,
-        errors: ["Ruta omnicanal inconsistente: canal no encontrado o empresa distinta."],
-      };
-    }
-    channel = row;
   } else {
     const { data: ch0, error: chErr } = await catalogSupabase
       .from("chat_channels")
@@ -340,16 +437,23 @@ export async function processInboundWebhookValue(
       if (routeAfter) {
         const r = routeAfter;
         const schema = resolveEmpresaDataSchema(r.data_schema || null);
-        dataSupabase =
-          schema === SUPABASE_APP_SCHEMA
-            ? catalogSupabase
-            : (createServiceRoleClientWithDbSchema(schema) as SupabaseAdmin);
-        const { data: chTenant } = await dataSupabase
-          .from("chat_channels")
-          .select("id, empresa_id, meta_phone_number_id, activo")
-          .eq("id", r.channel_id)
-          .maybeSingle();
-        channel = chTenant as WhatsappChannelRow | null;
+        console.info(WH_RESOLVE, "provision_route", { schema, channel_id: r.channel_id });
+
+        if (pool && isLikelyUnexposedTenantChatSchema(schema) && schema !== SUPABASE_APP_SCHEMA) {
+          channel = await pgLoadWhatsappChannelById(pool, schema, r.channel_id, r.empresa_id);
+          dataSupabase = catalogSupabase;
+        } else {
+          dataSupabase =
+            schema === SUPABASE_APP_SCHEMA
+              ? catalogSupabase
+              : (createServiceRoleClientWithDbSchema(schema) as SupabaseAdmin);
+          const { data: chTenant } = await dataSupabase
+            .from("chat_channels")
+            .select("id, empresa_id, meta_phone_number_id, activo")
+            .eq("id", r.channel_id)
+            .maybeSingle();
+          channel = chTenant as WhatsappChannelRow | null;
+        }
       } else {
         const { data: ch1 } = await catalogSupabase
           .from("chat_channels")
@@ -384,27 +488,83 @@ export async function processInboundWebhookValue(
     };
   }
 
-  const { data: channelSanity, error: chSanErr } = await dataSupabase
-    .from("chat_channels")
-    .select("id")
-    .eq("id", channel.id)
-    .eq("empresa_id", channel.empresa_id)
-    .maybeSingle();
-  if (chSanErr || !channelSanity) {
-    return {
-      ok: false,
-      processed: 0,
-      skipped: 0,
-      errors: [
-        `Canal ${channel.id} no existe en el schema PostgREST usado para chat_* (FK o data_schema inconsistente). Revisá migración supabase 20260411190000 y coherencia de empresas.data_schema. ${chSanErr?.message ?? ""}`,
-      ],
-    };
+  const empresaId = channel.empresa_id as string;
+  const tenantDataSchema = await fetchDataSchemaForEmpresaId(empresaId);
+  const useTenantPg = Boolean(pool && isLikelyUnexposedTenantChatSchema(tenantDataSchema));
+
+  if (useTenantPg && pool) {
+    console.info(WH_RESOLVE, "sanity_pg", {
+      tenantDataSchema,
+      channel_id: channel.id,
+      empresa_id: empresaId,
+    });
+    try {
+      const qt = quoteSchemaTable(assertAllowedChatDataSchema(tenantDataSchema), "chat_channels");
+      const rs = await pool.query(
+        `SELECT id::text FROM ${qt} WHERE id = $1::uuid AND empresa_id = $2::uuid LIMIT 1`,
+        [channel.id, empresaId]
+      );
+      if (!rs.rows?.length) {
+        return {
+          ok: false,
+          processed: 0,
+          skipped: 0,
+          errors: [
+            `Canal ${channel.id} no existe en Postgres (${tenantDataSchema}) para empresa ${empresaId}.`,
+          ],
+        };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(WH_RESOLVE, "sanity_pg_error", msg);
+      return {
+        ok: false,
+        processed: 0,
+        skipped: 0,
+        errors: [`sanity_pg chat_channels: ${msg}`],
+      };
+    }
+  } else {
+    const { data: channelSanity, error: chSanErr } = await dataSupabase
+      .from("chat_channels")
+      .select("id")
+      .eq("id", channel.id)
+      .eq("empresa_id", empresaId)
+      .maybeSingle();
+    if (chSanErr || !channelSanity) {
+      return {
+        ok: false,
+        processed: 0,
+        skipped: 0,
+        errors: [
+          `Canal ${channel.id} no existe en el schema PostgREST usado para chat_* (FK o data_schema inconsistente). Revisá migración supabase 20260411190000 y coherencia de empresas.data_schema. ${chSanErr?.message ?? ""}`,
+        ],
+      };
+    }
   }
 
-  /** Cliente PostgREST para tablas chat_* (tenant o zentra_erp). */
-  const supabase = dataSupabase;
+  const legacyTenantChat =
+    tenantDataSchema === SUPABASE_APP_SCHEMA
+      ? catalogSupabase
+      : (createServiceRoleClientWithDbSchema(tenantDataSchema) as SupabaseAdmin);
 
-  const empresaId = channel.empresa_id as string;
+  /** Cliente tenant: shim Postgres cuando `erp_*`/`er_*` no está expuesto en PostgREST; si no, PostgREST legacy. */
+  const supabase: SupabaseAdmin =
+    useTenantPg && pool
+      ? createTenantPgChatSupabaseShim({
+          pool,
+          schema: tenantDataSchema,
+          storageDelegate: catalogSupabase,
+          rpcDelegate: catalogSupabase as AppSupabaseClient,
+        })
+      : legacyTenantChat;
+
+  console.info("[webhooks/whatsapp]", "persist_engine", {
+    modo: useTenantPg ? "postgres_directo_shim" : "postgrest_legacy",
+    data_schema: tenantDataSchema,
+    empresa_id: empresaId,
+  });
+
   const channelId = channel.id as string;
   const messages = value.messages ?? [];
 
@@ -425,6 +585,7 @@ export async function processInboundWebhookValue(
     const displayName = contactNameForWa(value.contacts, from) ?? from;
 
     try {
+      console.info(WH_CONTACT, "upsert_start", { empresaId, phone: from, useTenantPg });
       const { data: contact, error: cErr } = await supabase
         .from("chat_contacts")
         .upsert(
@@ -440,9 +601,11 @@ export async function processInboundWebhookValue(
         .single();
 
       if (cErr || !contact) {
+        console.warn(WH_CONTACT, "upsert_error", { err: cErr?.message ?? "error" });
         errors.push(`Contacto: ${cErr?.message ?? "error"}`);
         continue;
       }
+      console.info(WH_CONTACT, "upsert_ok", { contact_id: (contact as { id?: string }).id });
 
       const contactId = contact.id as string;
       if (displayName && displayName !== contact.name) {
@@ -452,6 +615,7 @@ export async function processInboundWebhookValue(
           .eq("id", contactId);
       }
 
+      console.info(WH_CONV, "lookup_open", { contact_id: contactId, channel_id: channelId });
       let { data: existingConv } = await supabase
         .from("chat_conversations")
         .select(
@@ -468,6 +632,7 @@ export async function processInboundWebhookValue(
         : new Date().toISOString();
 
       if (!existingConv) {
+        console.info(WH_CONV, "bootstrap_new", { contact_id: contactId, channel_id: channelId });
         const { conv, error: bootErr } = await createWhatsappConversationWithActiveFlow(
           supabase,
           empresaId,
@@ -475,6 +640,7 @@ export async function processInboundWebhookValue(
           contactId
         );
         if (bootErr) {
+          console.warn(WH_CONV, "bootstrap_error", bootErr);
           errors.push(`Conversación: ${bootErr}`);
           continue;
         }
@@ -488,6 +654,7 @@ export async function processInboundWebhookValue(
 
       const conversationId = existingConv.id as string;
 
+      console.info(WH_FLOW, "sync_catalog_before", { conversationId });
       const syncedFlow = await syncWhatsappConversationFlowFromCatalog(supabase, empresaId, conversationId, {
         flow_code: (existingConv as { flow_code?: string | null }).flow_code ?? null,
         flow_current_node: (existingConv as { flow_current_node?: string | null }).flow_current_node ?? null,
@@ -655,16 +822,20 @@ export async function processInboundWebhookValue(
       });
 
       // ── Integración CRM Funnel (WhatsApp): tras autoasignación, creado por = canal, responsable = asesor.
-      const arCrm = await assignConversation(supabase, conversationId);
+      console.info("[webhooks/whatsapp][assignConversation]", useTenantPg ? "pg_v2" : "postgrest", {
+        conversationId,
+      });
+      const arCrm =
+        useTenantPg && pool
+          ? await assignConversationPg(pool, tenantDataSchema, conversationId)
+          : await assignConversation(supabase, conversationId);
       if (!arCrm.ok) {
         console.warn("[webhook/whatsapp][crm] assignConversation", arCrm.error);
       }
-      const pool = getChatPostgresPool();
       if (pool) {
-        const ds = await fetchDataSchemaForEmpresaId(empresaId);
         const crmPg = await ensureWhatsappInboundCrmLeadPg({
           pool,
-          data_schema: ds,
+          data_schema: tenantDataSchema,
           empresa_id: empresaId,
           contact_id: contactId,
           conversation_id: conversationId,
@@ -691,6 +862,7 @@ export async function processInboundWebhookValue(
 
       const flowEngine = createFlowEngine({ supabase });
 
+      console.info(WH_MSG, "persistInbound_start", { conversationId, wa_mid: waMid });
       const persistInbound = await persistInboundChatMessageAndBump({
         supabase,
         empresaId,
