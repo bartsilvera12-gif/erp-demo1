@@ -37,6 +37,8 @@ export type ActiveFlowsCatalogResult =
   | { kind: "none" };
 
 const OMNI_FLOW = "[omnichannel-flow]" as const;
+/** Logs de reinicio de puntero / sesión (buscar en Vercel: flow-restart). */
+const FLOW_RESTART = "[flow-restart]" as const;
 
 function rowIsWhatsappChannel(row: { channel?: string | null }): boolean {
   const ch = String(row.channel ?? "").trim().toLowerCase();
@@ -349,6 +351,12 @@ export async function restartWhatsappConversationToFlowStart(
   conversationId: string,
   opts: { preferFlowCode?: string | null; trigger: string }
 ): Promise<RestartToFlowStartResult> {
+  console.info(FLOW_RESTART, "restart_begin", {
+    empresaId,
+    conversationId,
+    trigger: opts.trigger,
+    preferFlowCode: opts.preferFlowCode ?? null,
+  });
   const catalog = await listActiveWhatsappFlowsForEmpresa(supabase, empresaId);
   console.info(CONV_LOG, "restart_attempt", {
     conversationId,
@@ -358,6 +366,7 @@ export async function restartWhatsappConversationToFlowStart(
     activeFlowCodes: catalog.kind === "single" ? catalog.allActiveCodes : [],
   });
   if (catalog.kind === "none") {
+    console.warn(FLOW_RESTART, "restart_failed", { reason: "no_active_flow", conversationId });
     console.warn(CONV_LOG, "conversation_restarted", {
       conversationId,
       ok: false,
@@ -418,6 +427,7 @@ export async function restartWhatsappConversationToFlowStart(
     targetFlow
   );
   if (!newSessionId) {
+    console.error(FLOW_RESTART, "restart_failed", { reason: "session_create_failed", conversationId });
     console.error(CONV_LOG, "conversation_restarted", {
       conversationId,
       ok: false,
@@ -441,6 +451,11 @@ export async function restartWhatsappConversationToFlowStart(
     .eq("empresa_id", empresaId);
 
   if (updErr) {
+    console.error(FLOW_RESTART, "restart_failed", {
+      reason: "conversation_update_failed",
+      conversationId,
+      message: updErr.message,
+    });
     console.error(CONV_LOG, "conversation_restarted", {
       conversationId,
       ok: false,
@@ -484,6 +499,13 @@ export async function restartWhatsappConversationToFlowStart(
     conversationId,
     flow_code: targetFlow,
     flow_current_node: firstNode,
+    trigger: opts.trigger,
+  });
+  console.info(FLOW_RESTART, "restart_ok", {
+    conversationId,
+    flow_code: targetFlow,
+    flow_current_node: firstNode,
+    flow_session_id: newSessionId,
     trigger: opts.trigger,
   });
 
