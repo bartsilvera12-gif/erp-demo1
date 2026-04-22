@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { GripVertical, Trash2 } from "lucide-react";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import { getSorteos } from "@/lib/sorteos/actions";
 import { parseMoneyPy } from "@/lib/sorteos/parse-money-py";
@@ -94,6 +94,25 @@ function isValidHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Evita que una respuesta parcial del PATCH borre campos con `undefined` al hacer spread sobre la opción local. */
+function mergeSavedFlowOption(prev: FlowNodeOption, incoming: Partial<FlowNodeOption>): FlowNodeOption {
+  return {
+    ...prev,
+    label: typeof incoming.label === "string" ? incoming.label : prev.label,
+    option_value: typeof incoming.option_value === "string" ? incoming.option_value : prev.option_value,
+    meta_button_id: typeof incoming.meta_button_id === "string" ? incoming.meta_button_id : prev.meta_button_id,
+    next_node_code:
+      incoming.next_node_code !== undefined ? incoming.next_node_code : prev.next_node_code,
+    sort_order: typeof incoming.sort_order === "number" ? incoming.sort_order : prev.sort_order,
+    option_payload:
+      incoming.option_payload !== undefined && incoming.option_payload !== null
+        ? incoming.option_payload
+        : prev.option_payload,
+    node_id: typeof incoming.node_id === "string" ? incoming.node_id : prev.node_id,
+    id: typeof incoming.id === "string" ? incoming.id : prev.id,
+  };
 }
 
 function compareFlowNodes(a: FlowNode, b: FlowNode): number {
@@ -256,6 +275,9 @@ export default function FlowEditorPage() {
   const params = useParams<{ flowCode: string }>();
   const flowCode = decodeURIComponent(params?.flowCode ?? "");
   const [nodes, setNodes] = useState<FlowNode[]>([]);
+  /** Lectura síncrona del último estado al guardar (evita `liveOpt.label` stale si el clic corre antes del re-render). */
+  const nodesRef = useRef<FlowNode[]>([]);
+  nodesRef.current = nodes;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -363,22 +385,21 @@ export default function FlowEditorPage() {
       if (!res.ok || !json.ok) throw new Error(json.error ?? "No se pudo cargar nodos");
       const items = json.items ?? [];
       setNodes(items);
-      setOptionPayloadDrafts((prev) => {
-        const next = { ...prev };
+      /** Tras cada GET, alinear borradores con servidor (antes solo se inicializaba si faltaba la clave → estado viejo). */
+      setOptionPayloadDrafts(() => {
+        const next: Record<string, string> = {};
         for (const node of items) {
           for (const option of node.options ?? []) {
-            if (typeof next[option.id] !== "string") {
-              next[option.id] = stringifyOptionPayload(option.option_payload);
-            }
+            next[option.id] = stringifyOptionPayload(option.option_payload);
           }
         }
         return next;
       });
-      setOptionSimpleDrafts((prev) => {
-        const next = { ...prev };
+      setOptionSimpleDrafts(() => {
+        const next: Record<string, OptionSimpleDraft> = {};
         for (const node of items) {
           for (const option of node.options ?? []) {
-            if (!next[option.id]) next[option.id] = toSimpleDraftFromPayload(option);
+            next[option.id] = toSimpleDraftFromPayload(option);
           }
         }
         return next;
@@ -583,7 +604,7 @@ export default function FlowEditorPage() {
 
   async function saveOption(node: FlowNode, opt: FlowNodeOption) {
     setSuccess(null);
-    const live = nodes.find((n) => n.id === node.id);
+    const live = nodesRef.current.find((n) => n.id === node.id);
     const liveOpt = live?.options.find((o) => o.id === opt.id);
     if (!live || !liveOpt) {
       throw new Error("No se encontró la opción en el editor. Recargá la página.");
@@ -633,12 +654,23 @@ export default function FlowEditorPage() {
     }
 
     const metaButtonId = resolveUniqueMetaButtonId(live, liveOpt.id, buttonLabel);
-    console.info("[flow-options]", "save_option_payload", {
+    const patchBody = {
+      label: buttonLabel,
+      meta_button_id: metaButtonId,
+      next_node_code: nextCode,
+      sort_order: liveOpt.sort_order,
+      option_payload: payloadParsed,
+    };
+    console.info("[flow-save]", "patch_chat_flow_option", {
+      flowCode,
+      node_code: live.node_code,
       option_id: liveOpt.id,
-      label_column: buttonLabel,
-      opcion_label_in_payload:
-        typeof payloadParsed.opcion_label === "string" ? payloadParsed.opcion_label : null,
-      mode,
+      body: patchBody,
+      label_from_ref: buttonLabel,
+    });
+    console.info("[flow-editor]", "save_option_before_fetch", {
+      option_id: liveOpt.id,
+      texto_boton_snapshot: buttonLabel,
     });
     const res = await fetchWithSupabaseSession(
       `/api/chat/flows/${encodeURIComponent(flowCode)}/nodes/${encodeURIComponent(live.node_code)}/options/${liveOpt.id}`,
@@ -646,13 +678,7 @@ export default function FlowEditorPage() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({
-          label: buttonLabel,
-          meta_button_id: metaButtonId,
-          next_node_code: nextCode,
-          sort_order: liveOpt.sort_order,
-          option_payload: payloadParsed,
-        }),
+        body: JSON.stringify(patchBody),
       }
     );
     const json = (await res.json().catch(() => ({}))) as {
@@ -661,7 +687,19 @@ export default function FlowEditorPage() {
       item?: FlowNodeOption;
     };
     if (!res.ok || !json.ok) throw new Error(json.error ?? "No se pudo guardar opción");
+    console.info("[flow-save]", "patch_chat_flow_option_response", {
+      option_id: liveOpt.id,
+      item_label: json.item?.label,
+      item_opcion_label:
+        json.item?.option_payload &&
+        typeof json.item.option_payload === "object" &&
+        json.item.option_payload !== null &&
+        "opcion_label" in json.item.option_payload
+          ? (json.item.option_payload as Record<string, unknown>).opcion_label
+          : undefined,
+    });
     if (json.item?.id === liveOpt.id) {
+      const incoming = json.item as Partial<FlowNodeOption>;
       setNodes((prev) =>
         prev.map((n) =>
           n.id !== live.id
@@ -669,7 +707,7 @@ export default function FlowEditorPage() {
             : {
                 ...n,
                 options: n.options.map((o) =>
-                  o.id === liveOpt.id ? { ...o, ...(json.item as FlowNodeOption) } : o
+                  o.id === liveOpt.id ? mergeSavedFlowOption(o, incoming) : o
                 ),
               }
         )

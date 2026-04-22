@@ -35,6 +35,14 @@ export async function PATCH(
           : {};
     }
 
+    console.info("[flow-api]", "patch_chat_flow_option_in", {
+      empresa_id: auth.empresa_id,
+      option_id: params.optionId,
+      patch_keys: Object.keys(patch),
+      label_in_patch: patch.label,
+      has_option_payload: "option_payload" in patch,
+    });
+
     const supabase = await getChatServiceClientForEmpresa(auth.empresa_id);
     const { data: currentOption, error: currentErr } = await supabase
       .from("chat_flow_options")
@@ -72,6 +80,17 @@ export async function PATCH(
       .maybeSingle();
     if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     if (!data) return NextResponse.json({ ok: false, error: "Opción no encontrada" }, { status: 404 });
+    const row = data as Record<string, unknown>;
+    const pl = row.option_payload;
+    const opcionLabelOut =
+      pl && typeof pl === "object" && pl !== null && "opcion_label" in pl
+        ? (pl as Record<string, unknown>).opcion_label
+        : undefined;
+    console.info("[flow-db]", "patch_chat_flow_option_after_update", {
+      option_id: row.id,
+      label: row.label,
+      opcion_label: opcionLabelOut,
+    });
     return NextResponse.json({ ok: true, item: data });
   } catch (e) {
     console.error("[api/chat/flows/.../options/:optionId][PATCH]", e);
