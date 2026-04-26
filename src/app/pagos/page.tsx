@@ -30,6 +30,8 @@ interface PagoCobrado {
   cliente_nombre: string;
   /** Nombre visible desde `cliente_tipos_servicio_catalogo` (resuelto en GET /api/pagos). */
   cliente_tipo_nombre: string;
+  /** Slug normalizado (`clientes.tipo_servicio_cliente`); `null` = sin tipo. */
+  cliente_tipo_slug: string | null;
   monto: number;
   fecha_pago: string;
   metodo_pago: string;
@@ -49,6 +51,8 @@ export default function PagosPage() {
   const [guardando, setGuardando] = useState(false);
   const [filtroDesde, setFiltroDesde] = useState("");
   const [filtroHasta, setFiltroHasta] = useState("");
+  /** "" = todos, "__sin__" = sin clasificar, sino slug en minúsculas. */
+  const [filtroTipoCliente, setFiltroTipoCliente] = useState("");
 
   const rangoFechas = useMemo(
     () => rangoDesdeHastaInputs(filtroDesde, filtroHasta),
@@ -84,6 +88,10 @@ export default function PagosPage() {
             factura_numero: (p.factura_numero as string) ?? "—",
             cliente_nombre: (p.cliente_nombre as string) ?? "—",
             cliente_tipo_nombre: String(p.cliente_tipo_nombre ?? "—").trim() || "—",
+            cliente_tipo_slug:
+              p.cliente_tipo_slug === null || p.cliente_tipo_slug === undefined
+                ? null
+                : String(p.cliente_tipo_slug).trim() || null,
             monto: Number(p.monto) || 0,
             fecha_pago: toCalendarDateStr((p.fecha_pago as string) ?? "") || String(p.fecha_pago ?? "").slice(0, 10),
             metodo_pago: (p.metodo_pago as string) ?? "efectivo",
@@ -116,7 +124,7 @@ export default function PagosPage() {
     [facturas, clientes]
   );
 
-  const pendientes = useMemo(() => {
+  const pendientesPorFecha = useMemo(() => {
     if (!rangoFechas) return pendientesBase;
     return pendientesBase.filter(
       (f) =>
@@ -125,25 +133,62 @@ export default function PagosPage() {
     );
   }, [pendientesBase, rangoFechas, fechaEnRangoCalendario]);
 
-  const cobradosFiltrados = useMemo(() => {
+  const pendientesVista = useMemo(() => {
+    if (filtroTipoCliente === "") return pendientesPorFecha;
+    if (filtroTipoCliente === "__sin__") {
+      return pendientesPorFecha.filter((f) => {
+        const c = clientes.find((x) => String(x.id) === String(f.cliente_id));
+        return !c || !(c.tipo_servicio_cliente ?? "").trim();
+      });
+    }
+    const slug = filtroTipoCliente.toLowerCase();
+    return pendientesPorFecha.filter((f) => {
+      const c = clientes.find((x) => String(x.id) === String(f.cliente_id));
+      return (c?.tipo_servicio_cliente ?? "").trim().toLowerCase() === slug;
+    });
+  }, [pendientesPorFecha, filtroTipoCliente, clientes]);
+
+  const cobradosPorFecha = useMemo(() => {
     if (!rangoFechas) return cobrados;
     return cobrados.filter((p) => fechaEnRangoCalendario(p.fecha_pago));
   }, [cobrados, rangoFechas, fechaEnRangoCalendario]);
 
-  /** Suma de saldos pendientes de la vista (misma fuente y filtros que la columna "Saldo"). */
+  const cobradosVista = useMemo(() => {
+    if (filtroTipoCliente === "") return cobradosPorFecha;
+    if (filtroTipoCliente === "__sin__")
+      return cobradosPorFecha.filter((p) => p.cliente_tipo_slug == null);
+    const slug = filtroTipoCliente.toLowerCase();
+    return cobradosPorFecha.filter((p) => p.cliente_tipo_slug === slug);
+  }, [cobradosPorFecha, filtroTipoCliente]);
+
+  const opcionesTipoFiltro = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of clientes) {
+      const t = (c.tipo_servicio_cliente ?? "").trim().toLowerCase();
+      if (t) s.add(t);
+    }
+    for (const k of Object.keys(mapNombreTipoServicio)) s.add(k);
+    return [...s]
+      .sort()
+      .map((slug) => ({
+        value: slug,
+        label: etiquetaVisibleTipoServicio(slug, mapNombreTipoServicio),
+      }));
+  }, [clientes, mapNombreTipoServicio]);
+
+  /** Suma de saldos de filas filtradas (fechas + tipo de cliente). */
   const totalPendienteVista = useMemo(
     () =>
-      pendientes.reduce(
+      pendientesVista.reduce(
         (acc, f) => acc + (Number.isFinite(f.saldo) ? f.saldo : 0),
         0
       ),
-    [pendientes]
+    [pendientesVista]
   );
 
-  /** Total de la vista actual (respeta el mismo filtro de fechas que la tabla). */
   const totalCobradoVista = useMemo(
-    () => cobradosFiltrados.reduce((acc, p) => acc + (Number.isFinite(p.monto) ? p.monto : 0), 0),
-    [cobradosFiltrados]
+    () => cobradosVista.reduce((acc, p) => acc + (Number.isFinite(p.monto) ? p.monto : 0), 0),
+    [cobradosVista]
   );
 
   const clienteMapNombre = useMemo(
@@ -226,8 +271,9 @@ export default function PagosPage() {
       </div>
 
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 text-sm">
-        <p className="w-full text-xs text-slate-500 sm:w-auto sm:mr-2">
-          Filtro por fechas (calendario local, mismo criterio que el dashboard). Se aplica al elegir desde/hasta.
+        <p className="w-full text-xs text-slate-500 sm:mr-2 sm:max-w-[min(100%,20rem)]">
+          Fechas (mismo criterio que el dashboard) y, opcionalmente, tipo de cliente. Los totales inferiores
+          se recalculan con lo visible.
         </p>
         <div className="flex flex-wrap items-end gap-3">
           <div>
@@ -248,11 +294,28 @@ export default function PagosPage() {
               className={`${inputClass} w-[11rem]`}
             />
           </div>
+          <div>
+            <label className={labelClass}>Tipo de cliente</label>
+            <select
+              value={filtroTipoCliente}
+              onChange={(e) => setFiltroTipoCliente(e.target.value)}
+              className={`${inputClass} min-w-[10.5rem] max-w-full sm:w-[14rem]`}
+            >
+              <option value="">Todos los tipos</option>
+              <option value="__sin__">Sin clasificar</option>
+              {opcionesTipoFiltro.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <button
             type="button"
             onClick={() => {
               setFiltroDesde("");
               setFiltroHasta("");
+              setFiltroTipoCliente("");
             }}
             className="border border-slate-300 bg-white px-3 py-2 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
@@ -267,20 +330,46 @@ export default function PagosPage() {
           <h2 className="text-sm font-semibold text-slate-700">Facturas pendientes de cobro</h2>
           <span className="text-xs text-slate-500">
             {rangoFechas
-              ? `${pendientes.length} en el rango · ${pendientesBase.length} con saldo en total`
-              : `${pendientes.length} facturas con saldo`}
+              ? `${pendientesVista.length} según filtros · ${pendientesBase.length} con saldo en total`
+              : `${pendientesVista.length} facturas con saldo (filtros)`}
           </span>
         </div>
-        {pendientes.length === 0 ? (
+        {pendientesBase.length === 0 ? (
           <div className="p-12 text-center text-slate-500">
             <p className="text-sm">No hay facturas pendientes de cobro.</p>
             <Link href="/clientes" className="text-[#0EA5E9] hover:underline text-sm mt-2 inline-block">
               Ir a Clientes →
             </Link>
           </div>
+        ) : rangoFechas && pendientesPorFecha.length === 0 ? (
+          <div className="p-12 text-center text-slate-500">
+            <p className="text-sm">Ninguna factura con emisión o vencimiento en el rango de fechas.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setFiltroDesde("");
+                setFiltroHasta("");
+                setFiltroTipoCliente("");
+              }}
+              className="text-[#0EA5E9] hover:underline text-xs mt-2"
+            >
+              Limpiar filtros
+            </button>
+          </div>
+        ) : pendientesVista.length === 0 ? (
+          <div className="p-12 text-center text-slate-500">
+            <p className="text-sm">Ninguna factura con el tipo de cliente seleccionado.</p>
+            <button
+              type="button"
+              onClick={() => setFiltroTipoCliente("")}
+              className="text-[#0EA5E9] hover:underline text-xs mt-2"
+            >
+              Ver todos los tipos
+            </button>
+          </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-0 text-sm">
               <thead className="bg-slate-50">
                 <tr>
                   {["Número", "Cliente", "Tipo de cliente", "Fecha", "Vencimiento", "Total", "Saldo", "Estado", "Acción"].map((h) => (
@@ -289,7 +378,7 @@ export default function PagosPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {pendientes.map((f) => (
+                {pendientesVista.map((f) => (
                   <tr key={f.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-slate-800">{f.numero_factura}</td>
                     <td className="px-4 py-3">
@@ -329,15 +418,32 @@ export default function PagosPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="bg-slate-50/90 border-t-2 border-slate-200">
-                  <td colSpan={6} className="px-4 py-3 text-xs font-semibold text-slate-700">
-                    Total pendiente {rangoFechas ? "en el rango" : "en esta vista"}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-bold text-[#0EA5E9] tabular-nums">
-                    Gs. {totalPendienteVista.toLocaleString("es-PY")}
-                  </td>
-                  <td colSpan={2} className="px-4 py-3 text-[11px] text-slate-500">
-                    {pendientes.length} registro{pendientes.length === 1 ? "" : "s"} · se recalcula al cambiar el filtro
+                <tr>
+                  <td colSpan={9} className="p-0">
+                    <div
+                      className="flex w-full min-w-0 flex-col items-stretch gap-2 border-t-2 border-slate-200 bg-slate-50/90 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                      role="status"
+                    >
+                      <p className="shrink-0 text-xs font-semibold text-slate-700 sm:max-w-[40%] sm:pr-2">
+                        {rangoFechas
+                          ? filtroTipoCliente
+                            ? "Total pendiente (filtros activos)"
+                            : "Total pendiente en el rango"
+                          : filtroTipoCliente
+                            ? "Total pendiente (filtros activos)"
+                            : "Total pendiente en esta vista"}
+                      </p>
+                      <p
+                        className="min-w-0 flex-1 whitespace-nowrap text-center text-sm font-bold tabular-nums text-[#0EA5E9] sm:px-2"
+                        style={{ lineHeight: 1.25 }}
+                      >
+                        {`Gs. ${totalPendienteVista.toLocaleString("es-PY")}`}
+                      </p>
+                      <p className="shrink-0 text-left text-[11px] text-slate-500 sm:max-w-[32%] sm:text-right">
+                        {pendientesVista.length} registro{pendientesVista.length === 1 ? "" : "s"} · se
+                        recalcula al cambiar el filtro
+                      </p>
+                    </div>
                   </td>
                 </tr>
               </tfoot>
@@ -357,9 +463,9 @@ export default function PagosPage() {
               </p>
             </div>
             <span className="text-xs text-slate-500">
-              {rangoFechas && cobrados.length > 0
-                ? `${cobradosFiltrados.length} en el rango · ${cobrados.length} pagos en total`
-                : `${cobradosFiltrados.length} pago${cobradosFiltrados.length === 1 ? "" : "s"}`}
+              {cobrados.length > 0
+                ? `${cobradosVista.length} según filtros · ${cobrados.length} en total`
+                : "0 pagos"}
             </span>
           </div>
           {cargandoCobrados ? (
@@ -369,7 +475,7 @@ export default function PagosPage() {
               <p className="text-sm">No hay pagos registrados.</p>
               <span className="text-xs mt-2 block">Los pagos aparecerán aquí cuando los registres.</span>
             </div>
-          ) : cobradosFiltrados.length === 0 ? (
+          ) : rangoFechas && cobradosPorFecha.length === 0 ? (
             <div className="p-12 text-center text-slate-500">
               <p className="text-sm">Ningún pago en el rango de fechas seleccionado.</p>
               <button
@@ -377,15 +483,27 @@ export default function PagosPage() {
                 onClick={() => {
                   setFiltroDesde("");
                   setFiltroHasta("");
+                  setFiltroTipoCliente("");
                 }}
                 className="text-[#0EA5E9] hover:underline text-xs mt-2"
               >
                 Limpiar filtros
               </button>
             </div>
+          ) : cobradosVista.length === 0 ? (
+            <div className="p-12 text-center text-slate-500">
+              <p className="text-sm">Ningún pago con el tipo de cliente seleccionado.</p>
+              <button
+                type="button"
+                onClick={() => setFiltroTipoCliente("")}
+                className="text-[#0EA5E9] hover:underline text-xs mt-2"
+              >
+                Ver todos los tipos
+              </button>
+            </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-0 text-sm">
                 <thead className="bg-slate-50">
                   <tr>
                     {["Factura", "Cliente", "Tipo de cliente", "Monto pagado", "Fecha", "Método", "Usuario", "Referencia"].map((h) => (
@@ -394,7 +512,7 @@ export default function PagosPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {cobradosFiltrados.map((p) => (
+                  {cobradosVista.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50">
                       <td className="px-4 py-3 font-mono text-slate-800">{p.factura_numero}</td>
                       <td className="px-4 py-3 text-slate-700 truncate max-w-[140px]">{p.cliente_nombre}</td>
@@ -415,15 +533,32 @@ export default function PagosPage() {
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="bg-slate-50/90 border-t-2 border-slate-200">
-                    <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-slate-700">
-                      Total cobrado {rangoFechas ? "en el rango" : "en esta vista"}
-                    </td>
-                    <td className="px-4 py-3 text-sm font-bold text-[#0EA5E9] tabular-nums">
-                      Gs. {totalCobradoVista.toLocaleString("es-PY")}
-                    </td>
-                    <td colSpan={4} className="px-4 py-3 text-[11px] text-slate-500">
-                      {cobradosFiltrados.length} registro{cobradosFiltrados.length === 1 ? "" : "s"} · se recalcula al cambiar el filtro
+                  <tr>
+                    <td colSpan={8} className="p-0">
+                      <div
+                        className="flex w-full min-w-0 flex-col items-stretch gap-2 border-t-2 border-slate-200 bg-slate-50/90 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                        role="status"
+                      >
+                        <p className="shrink-0 text-xs font-semibold text-slate-700 sm:max-w-[40%] sm:pr-2">
+                          {rangoFechas
+                            ? filtroTipoCliente
+                              ? "Total cobrado (filtros activos)"
+                              : "Total cobrado en el rango"
+                            : filtroTipoCliente
+                              ? "Total cobrado (filtros activos)"
+                              : "Total cobrado en esta vista"}
+                        </p>
+                        <p
+                          className="min-w-0 flex-1 whitespace-nowrap text-center text-sm font-bold tabular-nums text-[#0EA5E9] sm:px-2"
+                          style={{ lineHeight: 1.25 }}
+                        >
+                          {`Gs. ${totalCobradoVista.toLocaleString("es-PY")}`}
+                        </p>
+                        <p className="shrink-0 text-left text-[11px] text-slate-500 sm:max-w-[32%] sm:text-right">
+                          {cobradosVista.length} registro{cobradosVista.length === 1 ? "" : "s"} · se
+                          recalcula al cambiar el filtro
+                        </p>
+                      </div>
                     </td>
                   </tr>
                 </tfoot>

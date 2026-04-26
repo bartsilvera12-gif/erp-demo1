@@ -84,6 +84,12 @@ export async function GET(request: NextRequest) {
       return etiquetaVisibleTipoServicio(raw, catalogMap);
     };
 
+    const slugTipoCliente = (c: RowClientePago | null) => {
+      if (!c) return null;
+      const s = (c.tipo_servicio_cliente ?? "").trim();
+      return s ? s.toLowerCase() : null;
+    };
+
     const enriched = pagos.map((p) => {
       const factura = p.facturas as { numero_factura?: string; cliente_id?: string } | null;
       const clienteId = factura?.cliente_id;
@@ -94,6 +100,8 @@ export async function GET(request: NextRequest) {
         cliente_nombre: cliente ? (cliente.empresa ?? cliente.nombre_contacto ?? "—") : "—",
         /** Nombre legible; slug en `clientes.tipo_servicio_cliente` + catálogo. */
         cliente_tipo_nombre: labelTipoCliente(cliente ?? null),
+        /** Slug normalizado para filtrar en UI sin reconsultar. */
+        cliente_tipo_slug: slugTipoCliente(cliente ?? null),
         usuario_email: p.usuario_id ? usuarioMap[p.usuario_id] ?? "—" : "—",
       };
     });
