@@ -243,7 +243,7 @@ export default function PagosPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="w-full min-w-0 max-w-full space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Pagos</h1>
         <p className="text-sm text-gray-500 mt-0.5">Registrar pagos de facturas pendientes de cobro</p>
@@ -368,40 +368,57 @@ export default function PagosPage() {
             </button>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-0 text-sm">
+          <div className="overflow-x-auto overscroll-x-contain -mx-px sm:mx-0">
+            <table className="w-full min-w-[920px] table-auto border-separate border-spacing-0 text-sm sm:min-w-0 sm:w-full">
               <thead className="bg-slate-50">
                 <tr>
                   {["Número", "Cliente", "Tipo de cliente", "Fecha", "Vencimiento", "Total", "Saldo", "Estado", "Acción"].map((h) => (
-                    <th key={h} className="text-left text-xs font-semibold text-slate-600 px-4 py-3">{h}</th>
+                    <th
+                      key={h}
+                      className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 first:pl-4 last:pr-4 sm:px-4 sm:first:pl-5 sm:last:pr-5 lg:px-5"
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {pendientesVista.map((f) => (
                   <tr key={f.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-mono text-slate-800">{f.numero_factura}</td>
-                    <td className="px-4 py-3">
-                      <Link href={`/clientes/${f.cliente_id}`} className="text-[#0EA5E9] hover:underline truncate max-w-[140px] block">
+                    <td className="whitespace-nowrap px-3 py-2.5 font-mono text-sm text-slate-800 first:pl-4 sm:px-4 sm:first:pl-5 lg:px-5">
+                      {f.numero_factura}
+                    </td>
+                    <td className="min-w-[9rem] px-3 py-2.5 sm:min-w-[12rem] sm:px-4 lg:min-w-[16rem] xl:min-w-[20rem]">
+                      <Link
+                        href={`/clientes/${f.cliente_id}`}
+                        className="block min-w-0 break-words [overflow-wrap:anywhere] text-sm font-medium text-[#0EA5E9] hover:underline"
+                        title={String(clienteMapNombre[String(f.cliente_id)] ?? `Cliente #${String(f.cliente_id).slice(0, 8)}`)}
+                      >
                         {clienteMapNombre[String(f.cliente_id)] ?? `Cliente #${String(f.cliente_id).slice(0, 8)}`}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">
+                    <td className="px-3 py-2.5 text-sm text-slate-700 sm:px-4">
                       <span
-                        className="inline-block max-w-[11rem] truncate text-xs text-slate-600"
+                        className="inline-block max-w-[20rem] text-slate-600 2xl:whitespace-nowrap 2xl:max-w-none"
                         title={labelTipoClienteFila(String(f.cliente_id))}
                       >
                         {labelTipoClienteFila(String(f.cliente_id))}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-slate-600">{formatFecha(f.fecha)}</td>
-                    <td className="px-4 py-3 text-slate-600">{formatFecha(f.fecha_vencimiento)}</td>
-                    <td className="px-4 py-3 font-semibold text-slate-800">Gs. {f.monto.toLocaleString("es-PY")}</td>
-                    <td className="px-4 py-3 font-semibold text-amber-600">Gs. {f.saldo.toLocaleString("es-PY")}</td>
-                    <td className="px-4 py-3">
-                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">{f.estado}</span>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-slate-600 sm:px-4">{formatFecha(f.fecha)}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-slate-600 sm:px-4">{formatFecha(f.fecha_vencimiento)}</td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-right text-sm font-semibold tabular-nums text-slate-800 sm:px-4 sm:text-left">
+                      Gs. {f.monto.toLocaleString("es-PY")}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="whitespace-nowrap px-3 py-2.5 text-right text-sm font-semibold tabular-nums text-amber-600 sm:px-4 sm:text-left">
+                      Gs. {f.saldo.toLocaleString("es-PY")}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 sm:px-4">
+                      <span className="inline-block text-xs font-medium whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-800">
+                        {f.estado}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 last:pr-4 sm:px-4 sm:last:pr-5">
                       <button
                         type="button"
                         onClick={() => {
@@ -502,33 +519,57 @@ export default function PagosPage() {
               </button>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-0 text-sm">
+            <div className="overflow-x-auto overscroll-x-contain -mx-px sm:mx-0">
+              <table className="w-full min-w-[1000px] table-auto border-separate border-spacing-0 text-sm sm:min-w-0 sm:w-full">
                 <thead className="bg-slate-50">
                   <tr>
                     {["Factura", "Cliente", "Tipo de cliente", "Monto pagado", "Fecha", "Método", "Usuario", "Referencia"].map((h) => (
-                      <th key={h} className="text-left text-xs font-semibold text-slate-600 px-4 py-3">{h}</th>
+                      <th
+                        key={h}
+                        className="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 first:pl-4 last:pr-4 sm:px-4 sm:first:pl-5 sm:last:pr-5 lg:px-5"
+                      >
+                        {h}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {cobradosVista.map((p) => (
                     <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-mono text-slate-800">{p.factura_numero}</td>
-                      <td className="px-4 py-3 text-slate-700 truncate max-w-[140px]">{p.cliente_nombre}</td>
-                      <td className="px-4 py-3 text-slate-600">
+                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-sm text-slate-800 first:pl-4 sm:px-4 sm:first:pl-5 lg:px-5">
+                        {p.factura_numero}
+                      </td>
+                      <td className="min-w-[9rem] px-3 py-2.5 sm:min-w-[12rem] sm:px-4 lg:min-w-[16rem] xl:min-w-[20rem]">
                         <span
-                          className="inline-block max-w-[11rem] truncate text-xs"
+                          className="block min-w-0 break-words [overflow-wrap:anywhere] text-sm font-medium text-slate-800"
+                          title={p.cliente_nombre}
+                        >
+                          {p.cliente_nombre}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-sm text-slate-700 sm:px-4">
+                        <span
+                          className="inline-block max-w-[20rem] text-slate-600 2xl:whitespace-nowrap 2xl:max-w-none"
                           title={p.cliente_tipo_nombre}
                         >
                           {p.cliente_tipo_nombre}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-semibold text-slate-800">Gs. {p.monto.toLocaleString("es-PY")}</td>
-                      <td className="px-4 py-3 text-slate-600">{formatFecha(p.fecha_pago)}</td>
-                      <td className="px-4 py-3 text-slate-600">{METODO_LABELS[p.metodo_pago] ?? p.metodo_pago}</td>
-                      <td className="px-4 py-3 text-slate-600">{p.usuario_email}</td>
-                      <td className="px-4 py-3 text-slate-500">{p.referencia || "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-right text-sm font-semibold tabular-nums text-slate-800 sm:px-4 sm:text-left">
+                        Gs. {p.monto.toLocaleString("es-PY")}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-600 sm:px-4">
+                        {formatFecha(p.fecha_pago)}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-slate-600 sm:px-4">
+                        {METODO_LABELS[p.metodo_pago] ?? p.metodo_pago}
+                      </td>
+                      <td className="px-3 py-2.5 text-sm text-slate-600 sm:px-4 [overflow-wrap:anywhere] break-words">
+                        {p.usuario_email}
+                      </td>
+                      <td className="min-w-[6rem] px-3 py-2.5 text-sm text-slate-500 sm:px-4 [overflow-wrap:anywhere] break-words last:pr-4 sm:last:pr-5">
+                        {p.referencia || "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
