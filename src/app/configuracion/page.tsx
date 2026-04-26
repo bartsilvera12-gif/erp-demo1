@@ -120,10 +120,11 @@ export default function ConfiguracionPage() {
             <SettingsModuleCard
               title="Vistas del dashboard"
               subtitle="EMPRESA · TABLERO PRINCIPAL"
-              description="Definí qué pestañas del inicio tiene cada empresa y qué puede ver cada usuario (super admin en Empresas; administrador en Usuarios)."
+              description="El inicio ofrece varias pestañas según la organización. Configurá qué aplica a la empresa (admin global) y qué ve cada usuario (admin+usuarios) desde el hub dedicado; no hace falta adivinar la pantalla."
               icon={PieChart}
               badge={{ label: "Empresa / usuarios", tone: "neutral" as const }}
-              href="/usuarios"
+              href="/configuracion/vistas-dashboard"
+              actionLabel="Configurar"
             />
           </li>
           <li>
