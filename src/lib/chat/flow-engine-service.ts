@@ -24,10 +24,13 @@ import {
   applySorteoInteractiveCommercialContract,
   buildChatFlowDataUpsertsForSorteoOrder,
   buildSorteoOrderFlowVarOverrides,
+  explainParseSorteoParticipantFailure,
   finalizeSorteoOrderFromConfirmedFlowData,
   getSorteoDatosIncompletosMessage,
   getSorteoIdForChatFlow,
   optionPayloadFinalizesSorteoOrder,
+  parseSorteoParticipantFromFlowData,
+  prepareFlowDataForSorteoOrder,
   SORTEO_COMPROBANTE_MEDIA_ID_FIELD,
   SORTEO_COMPROBANTE_URL_FIELD,
 } from "@/lib/sorteos/sorteo-order-from-chat";
@@ -195,6 +198,10 @@ function isComprobanteMimeAccepted(mimeType: string | null | undefined): boolean
 }
 
 const FLOW_SORTEO_LOG = "[flow-sorteo]" as const;
+
+/** Mensaje operativo si falta contexto comercial tras hidratar (reenvío de comprobante); no pedir "Confirmar" sin botón. */
+const SORTEO_IMAGE_ORDER_INCOMPLETE_MESSAGE =
+  "Necesitamos confirmar nuevamente la cantidad de números para registrar tu participación.";
 
 function dedupeChatFlowFieldEntries(entries: [string, string][]): [string, string][] {
   const m = new Map<string, string>();
@@ -962,6 +969,76 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       flow_data_samples: sumM.samples ?? null,
     });
     return merged;
+  }
+
+  /**
+   * Último valor no vacío por `field_name` en toda la conversación+mismo flujo (todas las sesiones).
+   * Recorre filas por `created_at` descendente: la primera fila no vacía por clave gana (más reciente).
+   */
+  async function mergeConversationFlowDataFromOlderSessions(input: {
+    empresaId: string;
+    conversationId: string;
+    flowCode: string;
+    base: Record<string, string>;
+  }): Promise<{ merged: Record<string, string>; filledKeys: string[] }> {
+    const fc = input.flowCode.trim();
+    const { data, error } = await supabase
+      .from("chat_flow_data")
+      .select("field_name, field_value, flow_session_id, created_at")
+      .eq("empresa_id", input.empresaId)
+      .eq("conversation_id", input.conversationId)
+      .eq("flow_code", fc)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    const merged: Record<string, string> = { ...input.base };
+    const filledKeys: string[] = [];
+    const slotEmpty = (k: string) => !String(merged[k] ?? "").trim();
+    for (const row of data ?? []) {
+      const key = String((row as { field_name?: string }).field_name ?? "").trim();
+      if (!key) continue;
+      // No mezclar metadatos del comprobante de otro envío; el pipeline actual los define.
+      if (key.startsWith("sorteo_comprobante_")) continue;
+      const val = String((row as { field_value?: string }).field_value ?? "").trim();
+      if (!val || !slotEmpty(key)) continue;
+      merged[key] = val;
+      filledKeys.push(key);
+    }
+    return { merged, filledKeys };
+  }
+
+  /** Si el flujo no tiene nombre guardado, usar nombre del contacto WhatsApp (chat_contacts). */
+  async function hydrateSorteoFlowDataFromChatContact(
+    empresaId: string,
+    contactId: string | null | undefined,
+    base: Record<string, string>
+  ): Promise<Record<string, string>> {
+    const cid = contactId?.trim();
+    if (!cid) return base;
+    const hasNombre =
+      String(base.nombre ?? "").trim() ||
+      String(base.apellido ?? "").trim() ||
+      String(base.nombre_completo ?? "").trim() ||
+      String(base.nombre_y_apellido ?? "").trim();
+    if (hasNombre) return base;
+    const { data, error } = await supabase
+      .from("chat_contacts")
+      .select("name")
+      .eq("empresa_id", empresaId)
+      .eq("id", cid)
+      .maybeSingle();
+    if (error || !data) return base;
+    const nm = String((data as { name?: string | null }).name ?? "").trim();
+    if (!nm) return base;
+    const out: Record<string, string> = { ...base };
+    const parts = nm.split(/\s+/).filter(Boolean);
+    if (!String(out.nombre_completo ?? "").trim()) out.nombre_completo = nm;
+    if (!String(out.nombre ?? "").trim()) {
+      out.nombre = parts.length >= 2 ? parts[0] : nm;
+    }
+    if (parts.length >= 2 && !String(out.apellido ?? "").trim()) {
+      out.apellido = parts.slice(1).join(" ");
+    }
+    return out;
   }
 
   function interpolateTemplate(
@@ -2455,6 +2532,34 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         rawFdImg,
         imgFlowSid
       );
+      console.info(FLOW_SORTEO_LOG, "[order-create]", "[hydrate-active-session]", {
+        conversation_id: state.id,
+        flow_session_id: imgFlowSid,
+        flow_code: state.flow_code,
+        key_count: Object.keys(hydFdImg).length,
+        keys: Object.keys(hydFdImg).sort(),
+      });
+
+      const histMerge = await mergeConversationFlowDataFromOlderSessions({
+        empresaId: state.empresa_id,
+        conversationId: state.id,
+        flowCode: state.flow_code as string,
+        base: hydFdImg,
+      });
+      hydFdImg = histMerge.merged;
+      console.info(FLOW_SORTEO_LOG, "[order-create]", "[hydrate-conversation-fallback]", {
+        conversation_id: state.id,
+        flow_code: state.flow_code,
+        filled_count: histMerge.filledKeys.length,
+        filled_keys: histMerge.filledKeys.slice(0, 40),
+      });
+
+      hydFdImg = await hydrateSorteoFlowDataFromChatContact(
+        state.empresa_id,
+        state.contact_id,
+        hydFdImg
+      );
+
       const trimFd = (s: string | undefined) => (s ?? "").trim();
       if (!trimFd(hydFdImg[SORTEO_COMPROBANTE_URL_FIELD])) {
         hydFdImg[SORTEO_COMPROBANTE_URL_FIELD] = publicUrl;
@@ -2464,6 +2569,29 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       }
       hydFdImg = applyCantidadFallbackOneIfMissing(hydFdImg);
 
+      const preparedForCheck = prepareFlowDataForSorteoOrder(hydFdImg);
+      const participantOk = parseSorteoParticipantFromFlowData(preparedForCheck);
+      if (!participantOk) {
+        console.warn(FLOW_SORTEO_LOG, "[order-create]", "[missing-after-hydration]", {
+          conversation_id: state.id,
+          flow_session_id: imgFlowSid,
+          detail: explainParseSorteoParticipantFailure(preparedForCheck),
+        });
+      }
+      console.info(FLOW_SORTEO_LOG, "[order-create]", "[final-context]", {
+        schema: dataSchemaTag,
+        conversation_id: state.id,
+        flow_session_id: imgFlowSid,
+        media_id: params.mediaId,
+        has_participant: Boolean(participantOk),
+        cantidad_hint:
+          trimFd(hydFdImg.cantidad) ||
+          trimFd(hydFdImg.sorteo_snap_cantidad) ||
+          trimFd(hydFdImg.sorteo_cantidad_opcion) ||
+          null,
+        keys: Object.keys(hydFdImg).sort(),
+      });
+
       const sorteoIdPre = await getSorteoIdForChatFlow(supabase, state.empresa_id, state.flow_code as string);
 
       console.info(FLOW_SORTEO_LOG, "[order-create]", "[start]", {
@@ -2471,19 +2599,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         flow_session_id: imgFlowSid,
         flow_code: state.flow_code,
         empresa_id: state.empresa_id,
-      });
-      console.info(FLOW_SORTEO_LOG, "[order-create]", "[context]", {
-        schema: dataSchemaTag,
-        conversation_id: state.id,
-        flow_session_id: imgFlowSid,
         sorteo_id: sorteoIdPre,
-        media_id: params.mediaId,
-        cantidad_hint:
-          trimFd(hydFdImg.cantidad) ||
-          trimFd(hydFdImg.sorteo_snap_cantidad) ||
-          trimFd(hydFdImg.sorteo_cantidad_opcion) ||
-          null,
-        flow_data_keys: Object.keys(hydFdImg).sort(),
       });
 
       const notifySorteoImageErr = async (text: string) => {
@@ -2558,7 +2674,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         } else if (finImg.reason === "flow_sin_sorteo_id") {
           detail = "Este flujo no está vinculado a un sorteo.";
         } else if (finImg.reason === "datos_flujo_incompletos") {
-          detail = await getSorteoDatosIncompletosMessage(supabase, state.empresa_id, state.flow_code as string);
+          detail = SORTEO_IMAGE_ORDER_INCOMPLETE_MESSAGE;
         } else if (finImg.reason === "comprobante_no_validado") {
           detail = await mensajeClienteComprobanteNoValido(
             supabase,
@@ -2566,7 +2682,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
             typeof finImg.comprobanteEstado === "string" ? finImg.comprobanteEstado : ""
           );
         } else {
-          detail = await getSorteoDatosIncompletosMessage(supabase, state.empresa_id, state.flow_code as string);
+          detail = SORTEO_IMAGE_ORDER_INCOMPLETE_MESSAGE;
         }
         console.warn(FLOW_SORTEO_LOG, "[order-create]", "[skipped]", {
           reason: finImg.reason,
