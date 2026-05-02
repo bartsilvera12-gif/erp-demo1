@@ -286,8 +286,8 @@ function fillAttr(color: string): string {
 }
 
 /**
- * Datos en la parte inferior; cupones protagonistas. Colores desde mergeCustomTemplateFields.
- * 1–6 cupones: apilados centrados, tipografía grande. Más de 6: grilla compacta.
+ * Plantilla personalizada: datos del cliente bajo el logo; cupón sin cambiar su tamaño “bueno”.
+ * Colores desde mergeCustomTemplateFields. 1–6 cupones: centrados; más de 6: grilla.
  */
 function buildCustomTemplateOverlaySvg(
   w: number,
@@ -297,7 +297,8 @@ function buildCustomTemplateOverlaySvg(
 ): string {
   const padX = Math.max(40, Math.min(layout.cliente_nombre?.x ?? 72, w * 0.2));
   const bottomPad = Math.max(36, Math.round(h * 0.028));
-  const zoneTopLimit = Math.round(h * 0.33);
+  /** Origen vertical del bloque de datos (debajo del logo en plantillas verticales). */
+  const metaTop = Math.round(h * 0.21);
 
   const colName = fillAttr(layout.cliente_nombre.color);
   const colDoc = fillAttr(layout.cliente_documento.color);
@@ -307,18 +308,18 @@ function buildCustomTemplateOverlaySvg(
   const colCup = fillAttr(layout.cupones.color);
 
   const cupones = input.cupones ?? [];
-  const metaGap = 10;
-  const blockGap = 20;
+  const metaGap = 14;
+  const blockGap = 22;
 
   type MetaRow = { text: string; fs: number; color: string; weight: number };
-  const buildMetaRows = (scale: number): MetaRow[] => {
-    const r = (n: number) => Math.max(14, Math.round(n * scale));
+  const buildMetaRows = (metaScale: number): MetaRow[] => {
+    const r = (n: number) => Math.max(16, Math.round(n * metaScale));
     const rows: MetaRow[] = [];
     const cn = input.clienteNombre?.trim();
     if (cn) {
       rows.push({
         text: cn,
-        fs: r(Math.max(layout.cliente_nombre.fontSize, 26)),
+        fs: r(Math.max(layout.cliente_nombre.fontSize, 34)),
         color: colName,
         weight: 700,
       });
@@ -327,7 +328,7 @@ function buildCustomTemplateOverlaySvg(
     if (doc) {
       rows.push({
         text: `Documento: ${doc}`,
-        fs: r(Math.max(layout.cliente_documento.fontSize, 22)),
+        fs: r(Math.max(layout.cliente_documento.fontSize, 28)),
         color: colDoc,
         weight: 600,
       });
@@ -336,7 +337,7 @@ function buildCustomTemplateOverlaySvg(
     if (tel) {
       rows.push({
         text: `Teléfono: ${tel}`,
-        fs: r(Math.max(layout.telefono.fontSize, 22)),
+        fs: r(Math.max(layout.telefono.fontSize, 28)),
         color: colTel,
         weight: 600,
       });
@@ -345,7 +346,7 @@ function buildCustomTemplateOverlaySvg(
     if (ord) {
       rows.push({
         text: `Nº orden: ${ord}`,
-        fs: r(Math.max(layout.numero_orden.fontSize, 28)),
+        fs: r(Math.max(layout.numero_orden.fontSize, 34)),
         color: colOrd,
         weight: 700,
       });
@@ -354,7 +355,7 @@ function buildCustomTemplateOverlaySvg(
     if (sn) {
       rows.push({
         text: `Sorteo: ${sn}`,
-        fs: r(Math.max(layout.sorteo_nombre.fontSize, 22)),
+        fs: r(Math.max(layout.sorteo_nombre.fontSize, 28)),
         color: colSort,
         weight: 600,
       });
@@ -362,45 +363,58 @@ function buildCustomTemplateOverlaySvg(
     return rows;
   };
 
-  const metaLineH = (rows: MetaRow[]) => {
-    let sum = 0;
-    for (const row of rows) {
-      sum += row.fs + metaGap;
-    }
-    return sum - metaGap;
-  };
-
-  const cupBlockHeight = (scale: number): number => {
-    const n = cupones.length;
-    if (n === 0) return Math.round(36 * scale);
-    if (n <= 6) {
+  /** Altura del layout de cupones (el tamaño del número **no** usa metaScale). */
+  const simulateLastCupBaseline = (yAfterMeta: number): number => {
+    let y = yAfterMeta;
+    if (cupones.length === 0) return y;
+    if (cupones.length <= 6) {
       const fs = Math.min(
-        72,
-        Math.max(46, Math.round((layout.cupones.fontSize + (6 - Math.min(n, 6)) * 2) * scale))
+        84,
+        Math.max(52, Math.round(layout.cupones.fontSize + (6 - Math.min(cupones.length, 6)) * 3))
       );
       const step = Math.round(fs * 1.2);
-      return n * step + 8;
+      for (let i = 0; i < cupones.length; i++) {
+        y += step;
+      }
+      return y;
     }
     const cols = 3;
-    const cap = Math.min(n, 24);
-    const rowsN = Math.ceil(cap / cols);
-    return rowsN * 34 + 36;
+    const fs = 22;
+    const rowH = 34;
+    const maxShow = 24;
+    const list = cupones.slice(0, maxShow);
+    const gy = y + fs + 4;
+    let maxY = gy;
+    for (let i = 0; i < list.length; i++) {
+      const row = Math.floor(i / cols);
+      const yCell = gy + row * rowH;
+      if (yCell > maxY) maxY = yCell;
+    }
+    if (cupones.length > maxShow) {
+      maxY += Math.ceil(list.length / cols) * rowH + 8;
+      maxY += 22;
+    }
+    return maxY;
   };
 
-  let scale = 1;
-  let metaRows = buildMetaRows(scale);
-  let totalH = metaLineH(metaRows) + blockGap + cupBlockHeight(scale);
-  let yStart = h - bottomPad - totalH;
-
-  for (let i = 0; i < 14 && yStart < zoneTopLimit && scale > 0.62; i++) {
-    scale *= 0.9;
-    metaRows = buildMetaRows(scale);
-    totalH = metaLineH(metaRows) + blockGap + cupBlockHeight(scale);
-    yStart = h - bottomPad - totalH;
+  let metaScale = 1.06;
+  let metaRows = buildMetaRows(metaScale);
+  for (let iter = 0; iter < 22; iter++) {
+    metaRows = buildMetaRows(metaScale);
+    let ySim = metaTop;
+    for (const row of metaRows) {
+      ySim += row.fs + metaGap;
+    }
+    ySim += blockGap - metaGap;
+    const lastY = simulateLastCupBaseline(ySim);
+    if (lastY <= h - bottomPad || metaScale <= 0.56) {
+      break;
+    }
+    metaScale *= 0.93;
   }
 
   const pieces: string[] = [];
-  let y = yStart;
+  let y = metaTop;
   for (const row of metaRows) {
     y += row.fs;
     pieces.push(
@@ -424,10 +438,7 @@ function buildCustomTemplateOverlaySvg(
   } else if (cupones.length <= 6) {
     const fs = Math.min(
       84,
-      Math.max(
-        52,
-        Math.round((layout.cupones.fontSize + (6 - Math.min(cupones.length, 6)) * 3) * scale)
-      )
+      Math.max(52, Math.round(layout.cupones.fontSize + (6 - Math.min(cupones.length, 6)) * 3))
     );
     const step = Math.round(fs * 1.2);
     for (let i = 0; i < cupones.length; i++) {
@@ -447,7 +458,7 @@ function buildCustomTemplateOverlaySvg(
   } else {
     const cols = 3;
     const cellW = (w - 2 * padX) / cols;
-    const fs = Math.round(22 * scale);
+    const fs = 22;
     const rowH = 34;
     const maxShow = 24;
     const list = cupones.slice(0, maxShow);
@@ -476,7 +487,7 @@ function buildCustomTemplateOverlaySvg(
           text: `+${cupones.length - maxShow} más`,
           x: cx,
           y: gy,
-          fontSize: Math.round(18 * scale),
+          fontSize: 18,
           weight: 600,
           fill: colCup,
           textAnchor: "middle",
