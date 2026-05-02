@@ -46,6 +46,7 @@
     "qa:sorteo-ticket": "tsx ./scripts/qa-sorteo-ticket-delivery.ts"
   },
   "dependencies": {
+    "@fontsource/inter": "^5.2.8",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.99.0",
     "@xmldom/xmldom": "^0.9.9",
@@ -60,8 +61,8 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^2.15.4",
-    "sharp": "^0.34.5",
     "server-only": "^0.0.1",
+    "sharp": "^0.34.5",
     "tsx": "^4.21.0",
     "xml-crypto": "^6.1.2"
   },
