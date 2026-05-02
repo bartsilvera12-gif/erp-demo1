@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { getSorteoById, updateSorteo } from "@/lib/sorteos/actions";
 import type { SorteoEstado, SorteoTicketDeliveryMode } from "@/lib/sorteos/types";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import { normalizeTicketImageConfig } from "@/lib/sorteos/sorteo-ticket-types";
 
 export default function EditarSorteoPage() {
   const params = useParams();
@@ -28,6 +29,8 @@ export default function EditarSorteoPage() {
   const [ticketTitle, setTicketTitle] = useState("");
   const [ticketLegal, setTicketLegal] = useState("");
   const [ticketStub, setTicketStub] = useState("");
+  /** Resto de claves de ticket_image_config (colores, show*) para no pisarlas al guardar. */
+  const [ticketImageConfigBase, setTicketImageConfigBase] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
     if (!id) return;
@@ -52,7 +55,15 @@ export default function EditarSorteoPage() {
         setImagenUrl(s.imagen_url ?? "");
         setDatosBancarios(JSON.stringify(s.datos_bancarios ?? {}, null, 2));
         setTicketDeliveryMode((s.ticket_delivery_mode as SorteoTicketDeliveryMode) ?? "text_only");
-        const tic = (s.ticket_image_config ?? {}) as Record<string, unknown>;
+        const tic = normalizeTicketImageConfig(s.ticket_image_config);
+        setTicketImageConfigBase(
+          s.ticket_image_config &&
+            typeof s.ticket_image_config === "object" &&
+            s.ticket_image_config !== null &&
+            !Array.isArray(s.ticket_image_config)
+            ? { ...(s.ticket_image_config as Record<string, unknown>) }
+            : {}
+        );
         setTicketTitle(typeof tic.title === "string" ? tic.title : "");
         setTicketCaption(typeof tic.caption === "string" ? tic.caption : "");
         setTicketLegal(typeof tic.legalFooter === "string" ? tic.legalFooter : "");
@@ -99,9 +110,35 @@ export default function EditarSorteoPage() {
       fechaIso = d.toISOString();
     }
 
+    const tit = ticketTitle.trim();
+    const cap = ticketCaption.trim();
+    const leg = ticketLegal.trim();
+    const stu = ticketStub.trim();
+    const ticketMerged: Record<string, unknown> = {
+      showLogo: true,
+      showClienteNombre: true,
+      showDocumento: true,
+      showTelefono: true,
+      showNumeroOrden: true,
+      showCupones: true,
+      showSorteoNombre: true,
+      primaryColor: "#0f172a",
+      secondaryColor: "#64748b",
+      backgroundColor: "#f8fafc",
+      ...ticketImageConfigBase,
+    };
+    if (tit) ticketMerged.title = tit;
+    else delete ticketMerged.title;
+    if (cap) ticketMerged.caption = cap;
+    else delete ticketMerged.caption;
+    if (leg) ticketMerged.legalFooter = leg;
+    else delete ticketMerged.legalFooter;
+    if (stu) ticketMerged.ticket_image_only_stub = stu;
+    else delete ticketMerged.ticket_image_only_stub;
+
     setGuardando(true);
     try {
-      await updateSorteo(id, {
+      const updated = await updateSorteo(id, {
         nombre: nombreTrim,
         descripcion,
         precio_por_boleto: precio,
@@ -111,23 +148,11 @@ export default function EditarSorteoPage() {
         datos_bancarios: json,
         imagen_url: imagenUrl.trim() || null,
         ticket_delivery_mode: ticketDeliveryMode,
-        ticket_image_config: {
-          title: ticketTitle.trim() || undefined,
-          caption: ticketCaption.trim() || undefined,
-          legalFooter: ticketLegal.trim() || undefined,
-          ticket_image_only_stub: ticketStub.trim() || undefined,
-          showLogo: true,
-          showClienteNombre: true,
-          showDocumento: true,
-          showTelefono: true,
-          showNumeroOrden: true,
-          showCupones: true,
-          showSorteoNombre: true,
-          primaryColor: "#0f172a",
-          secondaryColor: "#64748b",
-          backgroundColor: "#f8fafc",
-        },
+        ticket_image_config: ticketMerged,
       });
+      if (updated.ticket_image_config && typeof updated.ticket_image_config === "object") {
+        setTicketImageConfigBase({ ...(updated.ticket_image_config as Record<string, unknown>) });
+      }
       setSuccess("Cambios guardados correctamente.");
       router.refresh();
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -145,7 +170,7 @@ export default function EditarSorteoPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6 max-w-3xl">
       <div className="flex items-center gap-2 text-sm text-slate-500">
         <Link href="/sorteos" className="hover:text-slate-800">
           Sorteos
@@ -174,6 +199,15 @@ export default function EditarSorteoPage() {
           Tickets / Comprobantes
         </Link>
       </div>
+      <p className="text-sm text-slate-600 max-w-3xl">
+        El botón <strong className="font-medium text-slate-800">Tickets / Comprobantes</strong> abre el reservorio de
+        envíos. La <strong className="font-medium text-slate-800">configuración del ticket</strong> (modo, texto, logo y
+        fondo) está en esta misma página, en la sección{" "}
+        <a href="#respuesta-ticket" className="text-violet-700 underline underline-offset-2">
+          Respuesta al comprador / Ticket
+        </a>
+        .
+      </p>
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 text-sm rounded-lg px-4 py-2" role="alert">
@@ -192,7 +226,9 @@ export default function EditarSorteoPage() {
         </div>
       )}
 
-      <form noValidate onSubmit={handleSubmit} className="space-y-4 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
+      <form noValidate onSubmit={handleSubmit} className="space-y-6">
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+          <h2 className="text-sm font-semibold text-slate-800 border-b border-slate-100 pb-2">Datos del sorteo</h2>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Nombre</label>
           <input
@@ -269,9 +305,22 @@ export default function EditarSorteoPage() {
             onChange={(e) => setImagenUrl(e.target.value)}
           />
         </div>
+        </section>
 
-        <div className="border border-dashed border-slate-300 rounded-xl p-4 space-y-3 bg-slate-50/80">
-          <h2 className="text-sm font-semibold text-slate-800">Respuesta al comprador / Ticket</h2>
+        <section
+          id="respuesta-ticket"
+          className="rounded-xl border-2 border-violet-300 bg-gradient-to-b from-violet-50/90 to-white p-6 shadow-md space-y-4 scroll-mt-6"
+        >
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Respuesta al comprador / Ticket</h2>
+            <p className="text-xs text-slate-600 mt-1">
+              Define cómo responde el sistema tras la compra en WhatsApp: solo texto, texto más imagen del ticket, o solo
+              imagen. Los archivos de logo y fondo se suben a Storage al elegir archivo; el resto se persiste al pulsar{" "}
+              <span className="font-medium">Guardar</span> (incluye{" "}
+              <code className="rounded bg-violet-100/80 px-1">ticket_delivery_mode</code> y{" "}
+              <code className="rounded bg-violet-100/80 px-1">ticket_image_config</code> en la base).
+            </p>
+          </div>
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Modo de respuesta</label>
             <select
@@ -367,12 +416,14 @@ export default function EditarSorteoPage() {
               />
             </label>
           </div>
-          <p className="text-xs text-slate-500">
-            Vista previa básica: al guardar, el ticket usa empresa + datos del comprador en el flujo. Podés revisar
-            envíos en Sorteos → Tickets / Comprobantes.
+          <p className="text-xs text-slate-600 border-t border-violet-200/80 pt-3">
+            Al guardar el formulario, el ticket generado usará empresa + datos del comprador del flujo. Podés revisar
+            envíos en el reservorio <strong>Tickets / Comprobantes</strong>.
           </p>
-        </div>
+        </section>
 
+        <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
+          <h2 className="text-sm font-semibold text-slate-800 border-b border-slate-100 pb-2">Datos bancarios</h2>
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Datos bancarios (JSON)</label>
           <textarea
@@ -381,7 +432,8 @@ export default function EditarSorteoPage() {
             onChange={(e) => setDatosBancarios(e.target.value)}
           />
         </div>
-        <div className="flex gap-3 pt-2">
+        </section>
+        <div className="flex gap-3 pt-1">
           <button
             type="submit"
             disabled={guardando}
