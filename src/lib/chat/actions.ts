@@ -797,8 +797,10 @@ function mapChatChannelRow(r: Record<string, unknown>): ChatChannelRow {
   const upd = r.updated_at;
   const metaTok = r.meta_access_token_present;
   const ycKey = r.ycloud_api_key_present;
+  const rawId = r.id;
+  const idStr = typeof rawId === "string" ? rawId.trim() : rawId != null ? String(rawId).trim() : "";
   return {
-    id: r.id as string,
+    id: idStr,
     empresa_id: r.empresa_id as string,
     type: normalizeChannelType(r.type),
     meta_phone_number_id: typeof mp === "string" ? mp : mp != null ? String(mp) : null,
@@ -883,7 +885,7 @@ async function tryFetchChatChannelsFromPg(
   const pool = getChatPostgresPool();
   if (!pool) return undefined;
   const qt = quoteSchemaTable(dataSchema, "chat_channels");
-  const q = `
+  const qFull = `
     SELECT id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id,
            activo, connection_mode, config_status, config, created_at, updated_at,
            (LOWER(TRIM(COALESCE(provider::text, ''))) = 'meta'
@@ -895,8 +897,35 @@ async function tryFetchChatChannelsFromPg(
     WHERE empresa_id = $1::uuid
     ORDER BY created_at ASC
   `;
-  const r = await pool.query(q, [empresaId]);
-  return (r.rows ?? []).map((row) => mapChatChannelRow(row as Record<string, unknown>));
+  const qMinimal = `
+    SELECT id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id,
+           activo, connection_mode, config_status, config, created_at, updated_at
+    FROM ${qt}
+    WHERE empresa_id = $1::uuid
+    ORDER BY created_at ASC
+  `;
+  try {
+    const r = await pool.query(qFull, [empresaId]);
+    return (r.rows ?? []).map((row) => mapChatChannelRow(row as Record<string, unknown>));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[fetchChatChannels] pg_full_failed", {
+      schema: dataSchema,
+      empresa_id: empresaId,
+      message: msg.slice(0, 300),
+    });
+    try {
+      const r = await pool.query(qMinimal, [empresaId]);
+      return (r.rows ?? []).map((row) => mapChatChannelRow(row as Record<string, unknown>));
+    } catch (e2) {
+      console.error("[fetchChatChannels] pg_minimal_failed", {
+        schema: dataSchema,
+        empresa_id: empresaId,
+        message: e2 instanceof Error ? e2.message.slice(0, 300) : String(e2),
+      });
+      return undefined;
+    }
+  }
 }
 
 async function tryFetchChatChannelByIdFromPg(
@@ -906,17 +935,37 @@ async function tryFetchChatChannelByIdFromPg(
 ): Promise<ChatChannelRow | null | undefined> {
   const pool = getChatPostgresPool();
   if (!pool) return undefined;
-  const q = `
-    SELECT id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id,
-           activo, connection_mode, config_status, config, created_at, updated_at
-    FROM ${quoteSchemaTable(dataSchema, "chat_channels")}
-    WHERE id = $1::uuid AND empresa_id = $2::uuid
-    LIMIT 1
-  `;
-  const r = await pool.query(q, [channelId, empresaId]);
-  const row = r.rows?.[0];
-  if (!row) return null;
-  return mapChatChannelRow(row as Record<string, unknown>);
+  const qt = quoteSchemaTable(dataSchema, "chat_channels");
+  const attempts = [
+    `SELECT id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id,
+           activo, connection_mode, config_status, config, created_at, updated_at FROM ${qt}
+     WHERE id = $1::uuid AND empresa_id = $2::uuid LIMIT 1`,
+    `SELECT id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id,
+           activo, config_status, config, created_at, updated_at FROM ${qt}
+     WHERE id = $1::uuid AND empresa_id = $2::uuid LIMIT 1`,
+    `SELECT id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id,
+           activo, config, created_at, updated_at FROM ${qt}
+     WHERE id = $1::uuid AND empresa_id = $2::uuid LIMIT 1`,
+  ];
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      const r = await pool.query(attempts[i]!, [channelId, empresaId]);
+      const row = r.rows?.[0];
+      if (!row) return null;
+      return mapChatChannelRow(row as Record<string, unknown>);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (i === attempts.length - 1) {
+        console.error("[fetchChatChannelById] pg_failed", {
+          schema: dataSchema,
+          empresa_id: empresaId,
+          message: msg.slice(0, 300),
+        });
+        return undefined;
+      }
+    }
+  }
+  return undefined;
 }
 
 export async function fetchChatChannels(): Promise<ChatChannelRow[]> {
@@ -927,21 +976,54 @@ export async function fetchChatChannels(): Promise<ChatChannelRow[]> {
     if (rows !== undefined) return rows;
   }
 
-  const { data, error } = await supabase
-    .from("chat_channels")
-    .select(
-      "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, connection_mode, config_status, config, created_at, updated_at"
-    )
-    .eq("empresa_id", empresa_id)
-    .order("created_at", { ascending: true });
+  const selectAttempts = [
+    "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, connection_mode, config_status, config, created_at, updated_at",
+    "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, config_status, config, created_at, updated_at",
+    "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, config, created_at, updated_at",
+  ];
 
-  if (error) {
-    if (isLikelyUnexposedTenantChatSchema(dataSchema) && isInvalidPostgrestSchemaError(error.message)) {
+  let data: Record<string, unknown>[] | null = null;
+  let lastError: { message: string } | null = null;
+
+  for (let i = 0; i < selectAttempts.length; i++) {
+    const sel = selectAttempts[i]!;
+    const res = await supabase
+      .from("chat_channels")
+      .select(sel)
+      .eq("empresa_id", empresa_id)
+      .order("created_at", { ascending: true });
+
+    if (!res.error) {
+      data = ((res.data ?? []) as unknown) as Record<string, unknown>[];
+      lastError = null;
+      break;
+    }
+    lastError = res.error;
+    const msg = res.error.message ?? "";
+    const retryable =
+      i < selectAttempts.length - 1 &&
+      (isMissingColumnError(msg, "connection_mode") ||
+        isMissingColumnError(msg, "config_status") ||
+        isMissingColumnError(msg, "provider_channel_id"));
+    if (!retryable) break;
+    console.warn("[fetchChatChannels] postgrest_retry_narrow_select", {
+      schema: dataSchema,
+      attempt: i + 1,
+      message: msg.slice(0, 200),
+    });
+  }
+
+  if (lastError) {
+    const msg = lastError.message ?? "";
+    if (isLikelyUnexposedTenantChatSchema(dataSchema) && isInvalidPostgrestSchemaError(msg)) {
       throw new Error(POSTGREST_TENANT_SCHEMA_HINT);
     }
-    throw new Error(error.message);
+    throw new Error(msg);
   }
-  const mapped = (data ?? []).map((r) => mapChatChannelRow(r as Record<string, unknown>));
+
+  const mapped = (data ?? [])
+    .map((r) => mapChatChannelRow(r))
+    .filter((r) => typeof r.id === "string" && r.id.trim().length > 0);
   await enrichChatChannelsSecretFlagsFromPg(dataSchema, empresa_id, mapped);
   return mapped;
 }
@@ -956,23 +1038,54 @@ export async function fetchChatChannelById(channelId: string): Promise<ChatChann
     if (row !== undefined) return row;
   }
 
-  const { data, error } = await supabase
-    .from("chat_channels")
-    .select(
-      "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, connection_mode, config_status, config, created_at, updated_at"
-    )
-    .eq("id", id)
-    .eq("empresa_id", empresa_id)
-    .maybeSingle();
+  const selectAttempts = [
+    "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, connection_mode, config_status, config, created_at, updated_at",
+    "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, config_status, config, created_at, updated_at",
+    "id, empresa_id, type, meta_phone_number_id, nombre, provider, provider_channel_id, activo, config, created_at, updated_at",
+  ];
 
-  if (error) {
-    if (isLikelyUnexposedTenantChatSchema(dataSchema) && isInvalidPostgrestSchemaError(error.message)) {
+  let data: Record<string, unknown> | null = null;
+  let lastError: { message: string } | null = null;
+
+  for (let i = 0; i < selectAttempts.length; i++) {
+    const sel = selectAttempts[i]!;
+    const res = await supabase
+      .from("chat_channels")
+      .select(sel)
+      .eq("id", id)
+      .eq("empresa_id", empresa_id)
+      .maybeSingle();
+
+    if (!res.error) {
+      data = (res.data ?? null) as Record<string, unknown> | null;
+      lastError = null;
+      break;
+    }
+    lastError = res.error;
+    const msg = res.error.message ?? "";
+    const retryable =
+      i < selectAttempts.length - 1 &&
+      (isMissingColumnError(msg, "connection_mode") ||
+        isMissingColumnError(msg, "config_status") ||
+        isMissingColumnError(msg, "provider_channel_id"));
+    if (!retryable) break;
+    console.warn("[fetchChatChannelById] postgrest_retry_narrow_select", {
+      schema: dataSchema,
+      attempt: i + 1,
+      message: msg.slice(0, 200),
+    });
+  }
+
+  if (lastError) {
+    const msg = lastError.message ?? "";
+    if (isLikelyUnexposedTenantChatSchema(dataSchema) && isInvalidPostgrestSchemaError(msg)) {
       throw new Error(POSTGREST_TENANT_SCHEMA_HINT);
     }
-    throw new Error(error.message);
+    throw new Error(msg);
   }
   if (!data) return null;
-  return mapChatChannelRow(data as Record<string, unknown>);
+  const row = mapChatChannelRow(data);
+  return row.id.trim().length > 0 ? row : null;
 }
 
 export type ChatChannelFormInput = {
