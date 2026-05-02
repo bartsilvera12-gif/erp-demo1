@@ -118,7 +118,65 @@ function aliasMatches(expected: string, ocr: string): boolean {
   const a = normalizeBankText(expected);
   const b = normalizeBankText(ocr);
   if (!a || !b) return false;
-  return a === b || a.includes(b) || b.includes(a);
+  if (a === b || a.includes(b) || b.includes(a)) return true;
+  /** CI/RUC/CVU con guiones vs OCR sin guiones o solo dígitos */
+  const da = normalizeBankAccountDigits(expected);
+  const db = normalizeBankAccountDigits(ocr);
+  if (da.length >= 6 && db.length >= 6 && da === db) return true;
+  return false;
+}
+
+/**
+ * Si los regex no encontraron campos, o devolvieron algo que no coincide, pero el texto OCR
+ * contiene los valores del canal, usamos esos (comprobantes sin etiquetas o extractor enganchando otro bloque).
+ */
+function supplementBankDetailsFromFullText(
+  fullText: string,
+  expected: DatosBancariosEsperadosConfig,
+  ocr: BankDetailsOcr
+): BankDetailsOcr {
+  const ft = fullText || "";
+  const mergedNorm = normalizeBankText(ft);
+  const digitsBlob = normalizeBankAccountDigits(ft);
+
+  const out: BankDetailsOcr = {
+    titular: ocr.titular.trim(),
+    numero_cuenta: ocr.numero_cuenta.trim(),
+    alias: ocr.alias.trim(),
+  };
+
+  const titExp = expected.titular.trim();
+  if (titExp) {
+    const nt = normalizeBankText(titExp);
+    const inText = nt.length >= 3 && mergedNorm.includes(nt);
+    if (inText && (!out.titular || !titularMatches(titExp, out.titular))) {
+      out.titular = titExp;
+    }
+  }
+
+  const cuentaExp = expected.numero_cuenta.trim();
+  const cuentaDig = normalizeBankAccountDigits(cuentaExp);
+  if (cuentaDig.length >= 6) {
+    if (digitsBlob.includes(cuentaDig) && (!out.numero_cuenta || !cuentaMatches(cuentaExp, out.numero_cuenta))) {
+      out.numero_cuenta = cuentaDig;
+    }
+  }
+
+  const aliasExp = expected.alias.trim();
+  if (aliasExp) {
+    const na = normalizeBankText(aliasExp);
+    const aliasDig = normalizeBankAccountDigits(aliasExp);
+    const inTextNorm = na.length >= 2 && mergedNorm.includes(na);
+    const inTextDig = aliasDig.length >= 6 && digitsBlob.includes(aliasDig);
+    if (
+      (inTextNorm || inTextDig) &&
+      (!out.alias || !aliasMatches(aliasExp, out.alias))
+    ) {
+      out.alias = aliasExp;
+    }
+  }
+
+  return out;
 }
 
 function countPairwiseMatches(expected: DatosBancariosEsperadosConfig, ocr: BankDetailsOcr): number {
@@ -168,7 +226,8 @@ export function validateReceiptBankDataAgainstExpected(
     return { apply: false, audit: baseAudit("omitido_sin_esperado") };
   }
 
-  const ocr = extractBankDetailsFromOcr(fullTextOcr);
+  const ocrRaw = extractBankDetailsFromOcr(fullTextOcr);
+  const ocr = supplementBankDetailsFromFullText(fullTextOcr, exp, ocrRaw);
   if (!hasAnyOcrBank(ocr)) {
     return {
       apply: false,
