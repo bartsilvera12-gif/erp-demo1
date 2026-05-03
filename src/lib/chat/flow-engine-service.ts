@@ -5,6 +5,7 @@ import {
   FLOW_SORTEO_PENDIENTE_DATOS_PARTICIPANTE_FIELD,
   parseComprobanteValidationConfig,
   SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD,
+  SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD,
   SORTEO_COMPROBANTE_VALIDACION_ID_FIELD,
 } from "@/lib/chat/comprobante-validation-types";
 import {
@@ -53,6 +54,10 @@ import {
 import { readSorteoCantidadNumericFromMap } from "@/lib/sorteos/sorteo-cantidad-fields";
 import { SORTEO_TICKET_DEFAULT_STUB, type SorteoTicketDeliveryMode } from "@/lib/sorteos/sorteo-ticket-types";
 import { isSorteoFinalTicketNode } from "@/lib/chat/sorteo-final-ticket-node";
+import {
+  canCloseSorteoPurchase,
+  getFlowClosePurchasePolicy,
+} from "@/lib/chat/sorteo-close-eligibility";
 import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema";
 import {
   describeFlowCaptureCompletenessForLogs,
@@ -2095,14 +2100,6 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         flowSidInteractive
       );
       const sendCtxFin = await getConversationSendContext(state.id);
-      const fin = await finalizeSorteoOrderFromConfirmedFlowData(supabase, {
-        empresaId: state.empresa_id,
-        conversationId: state.id,
-        flowCode: state.flow_code as string,
-        flowSessionId: flowSidInteractive,
-        whatsappNumero: sendCtxFin.toDigits,
-        flowData: hydFd,
-      });
 
       const notifyFinalizeError = async (text: string) => {
         const send = await flowSendText(sendCtxFin, text);
@@ -2118,6 +2115,89 @@ export function createFlowEngine(ctx: FlowEngineContext) {
           });
         }
       };
+
+      const closePolicyFin = await getFlowClosePurchasePolicy(
+        supabase,
+        state.empresa_id,
+        state.flow_code as string
+      );
+      const schemaEligFin = await fetchDataSchemaForEmpresaId(state.empresa_id);
+      const eligFin = await canCloseSorteoPurchase({
+        supabase,
+        empresaId: state.empresa_id,
+        flowCode: state.flow_code as string,
+        flowData: hydFd,
+        currentNodeCode: currentNode.node_code,
+        selectedOption: selected,
+        closePurchaseOnlyOnFinalConfirmation: closePolicyFin.closePurchaseOnlyOnFinalConfirmation,
+        interaction: { kind: "explicit_finalize" },
+      });
+      console.info("[sorteo-close][eligibility]", {
+        schema: schemaEligFin,
+        empresa_id: state.empresa_id,
+        flow_code: state.flow_code,
+        conversation_id: state.id,
+        flow_session_id: flowSidInteractive,
+        current_node_code: currentNode.node_code,
+        canClose: eligFin.canClose,
+        reason: eligFin.reason,
+        hasValidation: eligFin.hasValidation,
+        hasCantidad: eligFin.hasCantidad,
+        participantComplete: eligFin.participantComplete,
+        finalConfirmationDetected: eligFin.finalConfirmationDetected,
+      });
+      if (!eligFin.canClose) {
+        let detailBlocked: string;
+        if (eligFin.reason === "comprobante_no_valido") {
+          detailBlocked = await mensajeClienteComprobanteNoValido(
+            supabase,
+            state.id,
+            String((hydFd as Record<string, string>)[SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD] ?? ""),
+            String(
+              (hydFd as Record<string, string>)[SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD] ?? ""
+            ).trim() || undefined
+          );
+        } else if (eligFin.reason === "no_llego_a_confirmacion_final") {
+          detailBlocked =
+            "Para registrar tu compra, tocá Confirmado en el resumen cuando los datos estén correctos.";
+        } else if (eligFin.reason === "flujo_no_es_sorteo") {
+          detailBlocked = "Este flujo no está vinculado a un sorteo.";
+        } else {
+          detailBlocked = await getSorteoDatosIncompletosMessage(
+            supabase,
+            state.empresa_id,
+            state.flow_code as string
+          );
+        }
+        console.info("[sorteo-close][blocked-before-final-confirmation]", {
+          schema: schemaEligFin,
+          empresa_id: state.empresa_id,
+          flow_code: state.flow_code,
+          conversation_id: state.id,
+          flow_session_id: flowSidInteractive,
+          current_node_code: currentNode.node_code,
+          reason: eligFin.reason,
+        });
+        await notifyFinalizeError(detailBlocked);
+        return { ok: false, status: "sorteo_finalize_blocked", error: detailBlocked };
+      }
+      console.info("[sorteo-close][final-confirmation-ok]", {
+        schema: schemaEligFin,
+        empresa_id: state.empresa_id,
+        flow_code: state.flow_code,
+        conversation_id: state.id,
+        flow_session_id: flowSidInteractive,
+        current_node_code: currentNode.node_code,
+      });
+
+      const fin = await finalizeSorteoOrderFromConfirmedFlowData(supabase, {
+        empresaId: state.empresa_id,
+        conversationId: state.id,
+        flowCode: state.flow_code as string,
+        flowSessionId: flowSidInteractive,
+        whatsappNumero: sendCtxFin.toDigits,
+        flowData: hydFd,
+      });
 
       if (!fin.ok) {
         await notifyFinalizeError(fin.message);
@@ -2320,14 +2400,6 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       );
       if (isLazyFinalTarget && !hasEntradaLazy) {
         const schemaClose = await fetchDataSchemaForEmpresaId(state.empresa_id);
-        console.info("[sorteo-close][pre-finalize]", {
-          schema: schemaClose,
-          empresa_id: state.empresa_id,
-          conversation_id: state.id,
-          flow_session_id: flowSidInteractive,
-          next_node_code: nextCodeProbe,
-          trigger: "advance_to_final_without_finalize_payload",
-        });
         const sendCtxLazy = await getConversationSendContext(state.id);
         const notifyLazyErr = async (text: string) => {
           const send = await flowSendText(sendCtxLazy, text);
@@ -2343,6 +2415,98 @@ export function createFlowEngine(ctx: FlowEngineContext) {
             });
           }
         };
+
+        const lazyClosePolicy = await getFlowClosePurchasePolicy(
+          supabase,
+          state.empresa_id,
+          state.flow_code as string
+        );
+        if (lazyClosePolicy.closePurchaseOnlyOnFinalConfirmation) {
+          const eligLazy = await canCloseSorteoPurchase({
+            supabase,
+            empresaId: state.empresa_id,
+            flowCode: state.flow_code as string,
+            flowData: hydFdLazy as Record<string, string>,
+            currentNodeCode: currentNode.node_code,
+            selectedOption: selected,
+            closePurchaseOnlyOnFinalConfirmation: true,
+            interaction: {
+              kind: "lazy_finalize",
+              nextNodeCode: nextCodeProbe,
+              nextNodeMessageTemplate: nextNodeProbeLazy?.message_text ?? null,
+              selectedLabel: String(selected.label ?? ""),
+            },
+          });
+          console.info("[sorteo-close][eligibility]", {
+            schema: schemaClose,
+            empresa_id: state.empresa_id,
+            flow_code: state.flow_code,
+            conversation_id: state.id,
+            flow_session_id: flowSidInteractive,
+            current_node_code: currentNode.node_code,
+            canClose: eligLazy.canClose,
+            reason: eligLazy.reason,
+            hasValidation: eligLazy.hasValidation,
+            hasCantidad: eligLazy.hasCantidad,
+            participantComplete: eligLazy.participantComplete,
+            finalConfirmationDetected: eligLazy.finalConfirmationDetected,
+          });
+          if (!eligLazy.canClose) {
+            let detailElig: string;
+            if (eligLazy.reason === "comprobante_no_valido") {
+              detailElig = await mensajeClienteComprobanteNoValido(
+                supabase,
+                state.id,
+                String(
+                  (hydFdLazy as Record<string, string>)[SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD] ??
+                    ""
+                ),
+                String(
+                  (hydFdLazy as Record<string, string>)[SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD] ?? ""
+                ).trim() || undefined
+              );
+            } else if (eligLazy.reason === "no_llego_a_confirmacion_final") {
+              detailElig =
+                "Para registrar tu compra, tocá Confirmado en el resumen cuando los datos estén correctos.";
+            } else if (eligLazy.reason === "flujo_no_es_sorteo") {
+              detailElig = "Este flujo no está vinculado a un sorteo.";
+            } else {
+              detailElig = await getSorteoDatosIncompletosMessage(
+                supabase,
+                state.empresa_id,
+                state.flow_code as string
+              );
+            }
+            console.info("[sorteo-close][blocked-before-final-confirmation]", {
+              schema: schemaClose,
+              empresa_id: state.empresa_id,
+              flow_code: state.flow_code,
+              conversation_id: state.id,
+              flow_session_id: flowSidInteractive,
+              current_node_code: currentNode.node_code,
+              reason: eligLazy.reason,
+            });
+            await notifyLazyErr(detailElig);
+            return { ok: false, status: "sorteo_lazy_finalize_blocked", error: detailElig };
+          }
+          console.info("[sorteo-close][final-confirmation-ok]", {
+            schema: schemaClose,
+            empresa_id: state.empresa_id,
+            flow_code: state.flow_code,
+            conversation_id: state.id,
+            flow_session_id: flowSidInteractive,
+            current_node_code: currentNode.node_code,
+          });
+        }
+
+        console.info("[sorteo-close][pre-finalize]", {
+          schema: schemaClose,
+          empresa_id: state.empresa_id,
+          conversation_id: state.id,
+          flow_session_id: flowSidInteractive,
+          next_node_code: nextCodeProbe,
+          trigger: "advance_to_final_without_finalize_payload",
+        });
         const finLazy = await finalizeSorteoOrderFromConfirmedFlowData(supabase, {
           empresaId: state.empresa_id,
           conversationId: state.id,
@@ -3646,6 +3810,13 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         };
       }
 
+      const imgClosePolicy = await getFlowClosePurchasePolicy(
+        supabase,
+        state.empresa_id,
+        state.flow_code as string
+      );
+
+      if (!imgClosePolicy.closePurchaseOnlyOnFinalConfirmation) {
       const finImg = await finalizeSorteoOrderFromConfirmedFlowData(supabase, {
         empresaId: state.empresa_id,
         conversationId: state.id,
@@ -3861,6 +4032,17 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         sorteoId: finImg.sorteoId,
         trigger: "comprobante_imagen",
       });
+      } else {
+        console.info("[sorteo-close][image-validation-only]", {
+          schema: dataSchemaTag,
+          empresa_id: state.empresa_id,
+          flow_code: state.flow_code,
+          conversation_id: state.id,
+          flow_session_id: imgFlowSid,
+          current_node_code: currentNode.node_code,
+          reason: "awaiting_final_confirmation",
+        });
+      }
     }
 
     if (!currentNode.next_node_code) {

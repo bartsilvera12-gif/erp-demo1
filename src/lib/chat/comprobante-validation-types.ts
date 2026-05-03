@@ -92,6 +92,9 @@ export const SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD = "sorteo_comprobante_es
 export const SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD = "sorteo_comprobante_motivo_validacion";
 /** Manual inbox: comprobante OK pero faltan datos del participante para crear entrada. */
 export const MOTIVO_VALIDACION_ASESOR_PENDIENTE_DATOS = "asesor_aprobo_pendiente_datos";
+/** Manual inbox: datos completos; el cliente debe confirmar en el flujo antes de crear entrada. */
+export const MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE =
+  "asesor_aprobo_pendiente_confirmacion_cliente";
 /** Flag en chat_flow_data cuando el asesor aprobó pendiente de datos del cliente. */
 export const FLOW_SORTEO_PENDIENTE_DATOS_PARTICIPANTE_FIELD = "sorteo_pendiente_datos_participante";
 export const SORTEO_COMPROBANTE_HASH_FIELD = "sorteo_comprobante_hash";

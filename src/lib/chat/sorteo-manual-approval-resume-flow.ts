@@ -19,6 +19,7 @@ import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema"
 import {
   FLOW_SORTEO_PENDIENTE_DATOS_PARTICIPANTE_FIELD,
   MOTIVO_VALIDACION_ASESOR_PENDIENTE_DATOS,
+  MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE,
   SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD,
   SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD,
   SORTEO_COMPROBANTE_VALIDACION_ID_FIELD,
@@ -67,9 +68,16 @@ export async function runManualApprovalResumeParticipantFlow(input: {
   note: string;
   /** Campos extra en chat_flow_data (opcional; no duplicar los que ya arma esta función). */
   mergedFlowDataPatch?: Record<string, string>;
+  /** default: datos faltantes; alternativa: datos OK pero el cliente debe confirmar en el flujo. */
+  resumeVariant?: "missing_fields" | "pending_final_confirmation";
 }): Promise<{ whatsappWarning?: string }> {
   const fc = input.flowCode.trim();
   const sid = input.flowSessionId.trim();
+  const variant = input.resumeVariant ?? "missing_fields";
+  const motivoVal =
+    variant === "pending_final_confirmation"
+      ? MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE
+      : MOTIVO_VALIDACION_ASESOR_PENDIENTE_DATOS;
   const pendienteUpserts = [
     {
       empresa_id: input.empresaId,
@@ -77,7 +85,7 @@ export async function runManualApprovalResumeParticipantFlow(input: {
       flow_code: fc,
       flow_session_id: sid,
       field_name: FLOW_SORTEO_PENDIENTE_DATOS_PARTICIPANTE_FIELD,
-      field_value: "si",
+      field_value: variant === "pending_final_confirmation" ? "no" : "si",
     },
     {
       empresa_id: input.empresaId,
@@ -101,7 +109,7 @@ export async function runManualApprovalResumeParticipantFlow(input: {
       flow_code: fc,
       flow_session_id: sid,
       field_name: SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD,
-      field_value: MOTIVO_VALIDACION_ASESOR_PENDIENTE_DATOS,
+      field_value: motivoVal,
     },
     ...Object.entries(input.mergedFlowDataPatch ?? {}).map(([field_name, field_value]) => ({
       empresa_id: input.empresaId,
@@ -167,13 +175,17 @@ export async function runManualApprovalResumeParticipantFlow(input: {
     flow_code: fc,
     node_code: input.nextNodeCode,
     flow_session_id: sid,
-    event_type: "sorteo_manual_approval_pending_data",
+    event_type:
+      variant === "pending_final_confirmation"
+        ? "sorteo_manual_approval_pending_final_confirmation"
+        : "sorteo_manual_approval_pending_data",
     payload: {
       validation_id: input.validationId,
       missing_fields: input.missingFields,
       next_node_code: input.nextNodeCode,
       approved_by: input.usuarioId,
       approval_source: "inbox_manual",
+      resume_variant: variant,
       note: input.note || null,
     },
   });

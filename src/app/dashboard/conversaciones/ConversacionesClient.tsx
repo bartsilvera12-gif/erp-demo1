@@ -1425,7 +1425,14 @@ export function ConversacionesClient({
                         ].filter(Boolean);
                         if (res.whatsappWarning) parts.push(`WhatsApp: ${res.whatsappWarning}`);
                         setCompApprovalInfo(parts.join(" "));
-                      } else {
+                      } else if (res.mode === "pending_final_confirmation") {
+                        const parts = [
+                          "Comprobante aprobado. El cliente debe confirmar en el resumen del chat para crear la orden.",
+                          res.nextNodeCode ? `(Paso: ${res.nextNodeCode})` : "",
+                        ].filter(Boolean);
+                        if (res.whatsappWarning) parts.push(`WhatsApp: ${res.whatsappWarning}`);
+                        setCompApprovalInfo(parts.join(" "));
+                      } else if (res.mode === "order_closed") {
                         const parts = [
                           res.reused ? "Orden ya existente (reutilizada)." : "Compra cerrada.",
                           `Orden Nº ${res.numeroOrden}.`,

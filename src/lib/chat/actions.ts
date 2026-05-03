@@ -2123,7 +2123,8 @@ export async function fetchComprobanteValidacionesForConversation(
 
 export async function approveComprobanteValidacion(
   validacionId: string,
-  approvalNote?: string | null
+  approvalNote?: string | null,
+  options?: { forceClosePurchase?: boolean }
 ): Promise<ManualSorteoApprovalResult> {
   const { supabase, empresa_id, usuario_id, dataSchema } = await requireEmpresaTenantServiceRole();
   const id = validacionId.trim();
@@ -2135,6 +2136,7 @@ export async function approveComprobanteValidacion(
     usuarioId: usuario_id,
     validacionId: id,
     approvalNote,
+    forceClosePurchase: options?.forceClosePurchase === true,
   });
   if (!res.ok && isLikelyUnexposedTenantChatSchema(dataSchema) && isInvalidPostgrestSchemaError(res.message)) {
     return {

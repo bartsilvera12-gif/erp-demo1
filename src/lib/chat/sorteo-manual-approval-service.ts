@@ -6,10 +6,15 @@ import {
 } from "@/lib/sorteos/sorteo-order-from-chat";
 import {
   MOTIVO_VALIDACION_ASESOR_PENDIENTE_DATOS,
+  MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE,
   SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD,
   SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD,
   SORTEO_COMPROBANTE_VALIDACION_ID_FIELD,
 } from "@/lib/chat/comprobante-validation-types";
+import {
+  findSorteoConfirmationReviewNodeCode,
+  getFlowClosePurchasePolicy,
+} from "@/lib/chat/sorteo-close-eligibility";
 import {
   realignManualApprovalFlowSessionPointer,
   runManualApprovalResumeParticipantFlow,
@@ -49,6 +54,13 @@ export type ManualSorteoApprovalResult =
       /** true si solo se corrigió active_flow_session_id (caso viejo desalineado). */
       sessionRealigned?: boolean;
     }
+  | {
+      ok: true;
+      mode: "pending_final_confirmation";
+      reused: boolean;
+      nextNodeCode: string | null;
+      whatsappWarning?: string;
+    }
   | { ok: false; code: string; message: string };
 
 type ValidationRow = {
@@ -71,6 +83,8 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
   usuarioId: string;
   validacionId: string;
   approvalNote?: string | null;
+  /** Solo para tenants con close_purchase_only_on_final_confirmation: fuerza cierre + entrada como inbox_manual_close. */
+  forceClosePurchase?: boolean;
 }): Promise<ManualSorteoApprovalResult> {
   const vid = input.validacionId.trim();
   const note = (input.approvalNote ?? "").trim().slice(0, 2000);
@@ -404,6 +418,122 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
     }
   }
 
+  const closePurchasePolicy = await getFlowClosePurchasePolicy(tenantSb, input.empresaId, flowCode);
+  if (
+    closePurchasePolicy.closePurchaseOnlyOnFinalConfirmation &&
+    !input.forceClosePurchase &&
+    participantOk
+  ) {
+    hydFd = {
+      ...hydFd,
+      [SORTEO_COMPROBANTE_VALIDACION_ID_FIELD]: row.id,
+      [SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD]: "aprobado_manual",
+      [SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD]:
+        MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE,
+    };
+
+    const prevEstC = row.estado_validacion;
+    const prevMotC = row.motivo_validacion;
+    const { error: upValOnly } = await tenantSb
+      .from("chat_comprobante_validaciones")
+      .update({
+        estado_validacion: "aprobado_manual",
+        motivo_validacion: MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE,
+        previous_estado_validacion: prevEstC,
+        previous_motivo_validacion: prevMotC,
+        manual_approval_usuario_id: input.usuarioId,
+        manual_approval_at: new Date().toISOString(),
+        manual_approval_source: "inbox_manual",
+        manual_approval_note: note || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id)
+      .eq("empresa_id", input.empresaId);
+
+    if (upValOnly) {
+      logManual("error", { phase: "validation_update_validation_only", message: upValOnly.message });
+      return { ok: false, code: "validation_update", message: upValOnly.message };
+    }
+
+    await tenantSb.from("chat_flow_data").upsert(
+      [
+        {
+          empresa_id: input.empresaId,
+          conversation_id: row.conversation_id,
+          flow_code: flowCode,
+          flow_session_id: flowSessionId,
+          field_name: SORTEO_COMPROBANTE_ESTADO_VALIDACION_FIELD,
+          field_value: "aprobado_manual",
+        },
+        {
+          empresa_id: input.empresaId,
+          conversation_id: row.conversation_id,
+          flow_code: flowCode,
+          flow_session_id: flowSessionId,
+          field_name: SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD,
+          field_value: MOTIVO_VALIDACION_ASESOR_PENDIENTE_CONFIRMACION_CLIENTE,
+        },
+      ],
+      { onConflict: "flow_session_id,field_name" }
+    );
+
+    const confirmNode = await findSorteoConfirmationReviewNodeCode(tenantSb, input.empresaId, flowCode);
+
+    console.info("[sorteo-close][manual-approval-validation-only]", {
+      schema: dataSchema,
+      empresa_id: input.empresaId,
+      validation_id: row.id,
+      conversation_id: row.conversation_id,
+      flow_session_id: flowSessionId,
+      flow_code: flowCode,
+      next_node_code: confirmNode,
+    });
+
+    if (!confirmNode) {
+      return {
+        ok: false,
+        code: "no_confirmation_node",
+        message:
+          "No encontramos el nodo de resumen/confirmación en el flujo. Revisá la configuración del chat o usá cierre manual explícito.",
+      };
+    }
+
+    try {
+      const wOut = await runManualApprovalResumeParticipantFlow({
+        supabase: tenantSb,
+        empresaId: input.empresaId,
+        usuarioId: input.usuarioId,
+        conversationId: row.conversation_id,
+        flowCode,
+        flowSessionId,
+        channelId,
+        contactId,
+        validationId: row.id,
+        missingFields: [],
+        nextNodeCode: confirmNode,
+        note,
+        resumeVariant: "pending_final_confirmation",
+      });
+      logManual("done", {
+        schema: dataSchema,
+        empresa_id: input.empresaId,
+        validation_id: row.id,
+        mode: "pending_final_confirmation",
+      });
+      return {
+        ok: true,
+        mode: "pending_final_confirmation",
+        reused: false,
+        nextNodeCode: confirmNode,
+        whatsappWarning: wOut.whatsappWarning,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logManual("error", { phase: "resume_flow_pending_confirmation", message: msg });
+      return { ok: false, code: "resume_flow", message: msg };
+    }
+  }
+
   const { data: contactRow } = await tenantSb
     .from("chat_contacts")
     .select("phone_number")
@@ -421,7 +551,19 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
     conversation_id: row.conversation_id,
     flow_session_id: flowSessionId,
     validation_id: row.id,
+    force_close_purchase: Boolean(input.forceClosePurchase),
   });
+
+  if (input.forceClosePurchase) {
+    console.info("[sorteo-close][final-confirmation-ok]", {
+      schema: dataSchema,
+      empresa_id: input.empresaId,
+      conversation_id: row.conversation_id,
+      flow_session_id: flowSessionId,
+      validation_id: row.id,
+      approval_source: "inbox_manual_close",
+    });
+  }
 
   const fin = await finalizeSorteoOrderFromConfirmedFlowData(tenantSb, {
     empresaId: input.empresaId,
@@ -485,7 +627,7 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
       previous_motivo_validacion: prevMot,
       manual_approval_usuario_id: input.usuarioId,
       manual_approval_at: new Date().toISOString(),
-      manual_approval_source: "inbox_manual",
+      manual_approval_source: input.forceClosePurchase ? "inbox_manual_close" : "inbox_manual",
       manual_approval_note: note || null,
       updated_at: new Date().toISOString(),
     })
