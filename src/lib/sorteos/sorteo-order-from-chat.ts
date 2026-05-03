@@ -546,7 +546,13 @@ export function parseSorteoParticipantFromFlowData(data: Record<string, string>)
 
   return {
     nombre_completo: nombreCompleto,
-    cedula: norm(data["cedula"]) || norm(data["documento"]) || norm(data["ci"]),
+    cedula:
+      norm(data["cedula"]) ||
+      norm(data["cédula"]) ||
+      norm(data["documento"]) ||
+      norm(data["nro_documento"]) ||
+      norm(data["numero_documento"]) ||
+      norm(data["ci"]),
     ciudad: norm(data["ciudad"]),
     cantidad_boletos: qty,
   };
@@ -950,6 +956,25 @@ export async function ensureSorteoOrderFromChat(
       condicion: "getSorteoIdForChatFlow devolvió null (chat_flows.sorteo_id vacío o sin fila)",
     });
     return { ok: true, skipped: true, reason: "flow_sin_sorteo_id" };
+  }
+
+  const { describeFlowCaptureCompletenessForLogs } = await import("@/lib/sorteos/sorteo-flow-capture-order");
+  const completeness = await describeFlowCaptureCompletenessForLogs(
+    supabase,
+    input.empresaId,
+    flowCode,
+    flowData
+  );
+  if (completeness?.firstIncomplete) {
+    console.info("[sorteo-close][required-fields-check]", {
+      conversation_id: input.conversationId,
+      flow_session_id: input.flowSessionId?.trim() ?? null,
+      required_fields: completeness.required_fields,
+      missing_fields: completeness.missing_fields,
+      blocked_node_code: "ensure_sorteo_order",
+      first_incomplete_node: completeness.firstIncomplete.nodeCode,
+    });
+    return { ok: true, skipped: true, reason: "datos_flujo_incompletos" };
   }
 
   const participant = parseSorteoParticipantFromFlowData(flowData);

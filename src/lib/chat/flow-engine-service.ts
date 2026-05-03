@@ -53,6 +53,10 @@ import {
 import { SORTEO_TICKET_DEFAULT_STUB, type SorteoTicketDeliveryMode } from "@/lib/sorteos/sorteo-ticket-types";
 import { isSorteoFinalTicketNode } from "@/lib/chat/sorteo-final-ticket-node";
 import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema";
+import {
+  describeFlowCaptureCompletenessForLogs,
+  resolveEffectiveNodeCodeForFlowCompleteness,
+} from "@/lib/sorteos/sorteo-flow-capture-order";
 
 type ConversationFlowState = {
   id: string;
@@ -1073,6 +1077,75 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     return merged;
   }
 
+  async function buildHydratedFlowDataForCompletenessGate(input: {
+    empresaId: string;
+    conversationId: string;
+    flowCode: string;
+    flowSessionId: string;
+    mergeFlowVars?: Record<string, string>;
+  }): Promise<Record<string, string>> {
+    const rawFd = await getConversationFlowDataMap({
+      empresaId: input.empresaId,
+      conversationId: input.conversationId,
+      flowCode: input.flowCode,
+      flowSessionId: input.flowSessionId,
+      traceReadContext: "flow_completeness_gate",
+    });
+    let hyd = await hydrateFlowDataFromSessionEvents(
+      input.conversationId,
+      input.flowCode,
+      rawFd,
+      input.flowSessionId
+    );
+    if (input.mergeFlowVars && Object.keys(input.mergeFlowVars).length > 0) {
+      hyd = { ...hyd, ...input.mergeFlowVars };
+    }
+    return hyd;
+  }
+
+  async function resolveProposedNextWithCompletenessGate(input: {
+    empresaId: string;
+    conversationId: string;
+    flowCode: string;
+    flowSessionId: string;
+    proposedNextCode: string;
+    mergeFlowVars?: Record<string, string>;
+    gateReason: string;
+  }): Promise<{ effectiveNext: string; redirected: boolean }> {
+    const hydFd = await buildHydratedFlowDataForCompletenessGate({
+      empresaId: input.empresaId,
+      conversationId: input.conversationId,
+      flowCode: input.flowCode,
+      flowSessionId: input.flowSessionId,
+      mergeFlowVars: input.mergeFlowVars,
+    });
+    const resolved = await resolveEffectiveNodeCodeForFlowCompleteness(
+      supabase,
+      input.empresaId,
+      input.flowCode,
+      hydFd,
+      input.proposedNextCode
+    );
+    if (resolved.redirected) {
+      const desc = await describeFlowCaptureCompletenessForLogs(
+        supabase,
+        input.empresaId,
+        input.flowCode,
+        hydFd
+      );
+      console.info("[sorteo-close][required-fields-check]", {
+        conversation_id: input.conversationId,
+        flow_session_id: input.flowSessionId,
+        required_fields: desc?.required_fields ?? [],
+        missing_fields: desc?.missing_fields ?? [],
+        blocked_node_code: input.proposedNextCode.trim(),
+        redirected_to: resolved.effectiveNodeCode,
+        gate_reason: input.gateReason,
+      });
+    }
+    return { effectiveNext: resolved.effectiveNodeCode, redirected: resolved.redirected };
+  }
+
   /**
    * Último valor no vacío por `field_name` en toda la conversación+mismo flujo (todas las sesiones).
    * Recorre filas por `created_at` descendente: la primera fila no vacía por clave gana (más reciente).
@@ -1232,11 +1305,23 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       carriesMergeFlowVars: Boolean(mergeFlowVars && Object.keys(mergeFlowVars).length),
     });
 
+    const sidChain = state.active_flow_session_id?.trim();
+    if (!sidChain) return null;
+    const chainResolved = await resolveProposedNextWithCompletenessGate({
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code,
+      flowSessionId: sidChain,
+      proposedNextCode: node.next_node_code.trim(),
+      mergeFlowVars,
+      gateReason: "auto_chain_after_outbound",
+    });
+
     const adv = await advanceConversationToNode({
       conversationId: state.id,
       empresaId: state.empresa_id,
       flowCode: state.flow_code,
-      nextNodeCode: node.next_node_code,
+      nextNodeCode: chainResolved.effectiveNext,
     });
     if (!adv.ok) return { ok: false, error: adv.error ?? "No se pudo auto-avanzar nodo" };
 
@@ -1244,12 +1329,12 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       empresaId: state.empresa_id,
       conversationId: state.id,
       flowCode: state.flow_code,
-      nodeCode: node.next_node_code,
+      nodeCode: chainResolved.effectiveNext,
       flowSessionId: state.active_flow_session_id,
       eventType: "node_advanced",
       payload: {
         from_node: node.node_code,
-        next_node_code: node.next_node_code,
+        next_node_code: chainResolved.effectiveNext,
         reason: "auto_chain_after_outbound",
       },
     });
@@ -1281,6 +1366,63 @@ export function createFlowEngine(ctx: FlowEngineContext) {
 
     const node = await getNode(state.empresa_id, state.flow_code, state.flow_current_node);
     if (!node) return { ok: false, error: "Nodo actual no encontrado" };
+
+    const sidGate = state.active_flow_session_id.trim();
+    const hydFdPointer = await buildHydratedFlowDataForCompletenessGate({
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code,
+      flowSessionId: sidGate,
+      mergeFlowVars: params.mergeFlowVars,
+    });
+    const ptrResolved = await resolveEffectiveNodeCodeForFlowCompleteness(
+      supabase,
+      state.empresa_id,
+      state.flow_code,
+      hydFdPointer,
+      state.flow_current_node
+    );
+    if (
+      ptrResolved.redirected &&
+      ptrResolved.effectiveNodeCode.trim() !== state.flow_current_node.trim()
+    ) {
+      const descPtr = await describeFlowCaptureCompletenessForLogs(
+        supabase,
+        state.empresa_id,
+        state.flow_code,
+        hydFdPointer
+      );
+      console.info("[sorteo-close][required-fields-check]", {
+        conversation_id: state.id,
+        flow_session_id: sidGate,
+        required_fields: descPtr?.required_fields ?? [],
+        missing_fields: descPtr?.missing_fields ?? [],
+        blocked_node_code: state.flow_current_node.trim(),
+        redirected_to: ptrResolved.effectiveNodeCode,
+        gate_reason: "send_current_node_pointer_vs_flow_order",
+      });
+      const advPtr = await advanceConversationToNode({
+        conversationId: state.id,
+        empresaId: state.empresa_id,
+        flowCode: state.flow_code,
+        nextNodeCode: ptrResolved.effectiveNodeCode,
+      });
+      if (!advPtr.ok) return { ok: false, error: advPtr.error ?? "advance_failed" };
+      await insertFlowEvent({
+        empresaId: state.empresa_id,
+        conversationId: state.id,
+        flowCode: state.flow_code,
+        nodeCode: ptrResolved.effectiveNodeCode,
+        flowSessionId: sidGate,
+        eventType: "flow_completeness_pointer_adjusted",
+        payload: {
+          from_node: state.flow_current_node,
+          next_node_code: ptrResolved.effectiveNodeCode,
+          reason: "missing_capture_before_current_step",
+        },
+      });
+      return sendCurrentFlowNode({ ...params, __autoHop: currentHop });
+    }
 
     const flowVarsBase = await getConversationFlowDataMap({
       empresaId: state.empresa_id,
@@ -2498,10 +2640,22 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       }
       return { ok: true, status: "no_next_node" };
     }
+    const advInteractiveGate = await resolveProposedNextWithCompletenessGate({
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code as string,
+      flowSessionId: flowSidInteractive,
+      proposedNextCode: selected.next_node_code.trim(),
+      mergeFlowVars: sorteoOrderMerge,
+      gateReason: "interactive_reply",
+    });
+    const nextCodeEffective = advInteractiveGate.effectiveNext;
+
     console.info("[flow-engine] next node resolved", {
       conversationId: state.id,
       currentNode: currentNode.node_code,
-      nextNodeCode: selected.next_node_code,
+      nextNodeCode: nextCodeEffective,
+      proposedNextNodeCode: selected.next_node_code,
       metaButtonId: params.metaButtonId,
     });
 
@@ -2509,7 +2663,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       conversationId: state.id,
       empresaId: state.empresa_id,
       flowCode: state.flow_code,
-      nextNodeCode: selected.next_node_code,
+      nextNodeCode: nextCodeEffective,
     });
     if (!adv.ok) {
       return {
@@ -2523,20 +2677,20 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       empresaId: state.empresa_id,
       conversationId: state.id,
       flowCode: state.flow_code,
-      nodeCode: selected.next_node_code,
+      nodeCode: nextCodeEffective,
       flowSessionId: flowSidInteractive,
       eventType: "node_advanced",
       selectedOptionId: selected.id,
       metaButtonId: params.metaButtonId,
-      payload: { from_node: currentNode.node_code, next_node_code: selected.next_node_code },
+      payload: { from_node: currentNode.node_code, next_node_code: nextCodeEffective },
     });
 
     const nextNodeForTicket = await getNode(
       state.empresa_id,
       state.flow_code,
-      selected.next_node_code
+      nextCodeEffective
     );
-    const isSorteoFinal = isSorteoFinalTicketNode(selected.next_node_code, {
+    const isSorteoFinal = isSorteoFinalTicketNode(nextCodeEffective, {
       nodeMessageTemplate: nextNodeForTicket?.message_text ?? null,
     });
     let sorteoSuppressPlain = false;
@@ -2550,7 +2704,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       });
       console.info("[sorteo-ticket] final_node_check", {
         conversationId: state.id,
-        nextNodeCode: selected.next_node_code,
+        nextNodeCode: nextCodeEffective,
         isSorteoFinal: true,
         hasPackage: true,
         mode: sorteoMode,
@@ -2559,7 +2713,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
         conversationId: state.id,
         sorteoId: sorteoTicketPackage.fin.sorteoId,
         entradaId: sorteoTicketPackage.fin.entradaId,
-        nextNodeCode: selected.next_node_code,
+        nextNodeCode: nextCodeEffective,
       });
       if (sorteoMode === "text_only") {
         console.info("[sorteo-ticket] final_node_delivery_skipped", { reason: "text_only" });
@@ -2601,7 +2755,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     } else if (sorteoTicketPackage) {
       console.info("[sorteo-ticket] final_node_check", {
         conversationId: state.id,
-        nextNodeCode: selected.next_node_code,
+        nextNodeCode: nextCodeEffective,
         isSorteoFinal: false,
         hasPackage: true,
       });
@@ -2618,7 +2772,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
     }
     console.info("[flow-engine] message sent for node", {
       conversationId: state.id,
-      nodeCode: sent.nodeCode ?? selected.next_node_code,
+      nodeCode: sent.nodeCode ?? nextCodeEffective,
     });
     if (sorteoTicketPackage && isSorteoFinal && sorteoMode === "text_and_image") {
       console.info("[sorteo-ticket] final_node_delivery_start", {
@@ -2663,7 +2817,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       }
     }
 
-    return { ok: true, status: "advanced", nextNodeCode: selected.next_node_code };
+    return { ok: true, status: "advanced", nextNodeCode: nextCodeEffective };
   }
 
   async function processTextReply(
@@ -2831,18 +2985,28 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       return { ok: true, status: "captured_no_next_node" };
     }
 
+    const txtGate = await resolveProposedNextWithCompletenessGate({
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code,
+      flowSessionId: textFlowSid,
+      proposedNextCode: currentNode.next_node_code.trim(),
+      gateReason: "text_captured",
+    });
+    const nextTxt = txtGate.effectiveNext;
+
     console.info("[flow-engine] text captured advance", {
       conversationId: state.id,
       currentNode: currentNode.node_code,
       saveAsField: currentNode.save_as_field ?? null,
-      nextNodeCode: currentNode.next_node_code,
+      nextNodeCode: nextTxt,
     });
 
     const adv = await advanceConversationToNode({
       conversationId: state.id,
       empresaId: state.empresa_id,
       flowCode: state.flow_code,
-      nextNodeCode: currentNode.next_node_code,
+      nextNodeCode: nextTxt,
     });
     if (!adv.ok) {
       return {
@@ -2856,12 +3020,12 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       empresaId: state.empresa_id,
       conversationId: state.id,
       flowCode: state.flow_code,
-      nodeCode: currentNode.next_node_code,
+      nodeCode: nextTxt,
       flowSessionId: textFlowSid,
       eventType: "node_advanced",
       payload: {
         from_node: currentNode.node_code,
-        next_node_code: currentNode.next_node_code,
+        next_node_code: nextTxt,
         reason: "text_captured",
       },
     });
@@ -2871,7 +3035,7 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       return { ok: false, status: "send_next_node_failed", error: sent.error };
     }
 
-    return { ok: true, status: "advanced", nextNodeCode: currentNode.next_node_code };
+    return { ok: true, status: "advanced", nextNodeCode: nextTxt };
   }
 
   async function processImageReply(
@@ -3591,11 +3755,27 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       return { ok: true, status: "captured_no_next_node" };
     }
 
+    const imgMergePreview = {
+      sorteo_comprobante_url: publicUrl,
+      comprobante_recibido: "sí",
+      ...(sorteoOrderMerge ?? {}),
+    };
+    const imgGate = await resolveProposedNextWithCompletenessGate({
+      empresaId: state.empresa_id,
+      conversationId: state.id,
+      flowCode: state.flow_code as string,
+      flowSessionId: imgFlowSid,
+      proposedNextCode: currentNode.next_node_code.trim(),
+      mergeFlowVars: imgMergePreview,
+      gateReason: "image_received",
+    });
+    const nextImg = imgGate.effectiveNext;
+
     const adv = await advanceConversationToNode({
       conversationId: state.id,
       empresaId: state.empresa_id,
       flowCode: state.flow_code,
-      nextNodeCode: currentNode.next_node_code,
+      nextNodeCode: nextImg,
     });
     if (!adv.ok) {
       return { ok: false, status: "advance_failed", error: adv.error };
@@ -3605,28 +3785,24 @@ export function createFlowEngine(ctx: FlowEngineContext) {
       empresaId: state.empresa_id,
       conversationId: state.id,
       flowCode: state.flow_code,
-      nodeCode: currentNode.next_node_code,
+      nodeCode: nextImg,
       flowSessionId: imgFlowSid,
       eventType: "node_advanced",
       payload: {
         from_node: currentNode.node_code,
-        next_node_code: currentNode.next_node_code,
+        next_node_code: nextImg,
         reason: "image_received",
       },
     });
 
     const sent = await sendCurrentFlowNode({
       conversationId: state.id,
-      mergeFlowVars: {
-        sorteo_comprobante_url: publicUrl,
-        comprobante_recibido: "sí",
-        ...(sorteoOrderMerge ?? {}),
-      },
+      mergeFlowVars: imgMergePreview,
     });
     if (!sent.ok) {
       return { ok: false, status: "send_next_node_failed", error: sent.error };
     }
-    return { ok: true, status: "advanced", nextNodeCode: currentNode.next_node_code };
+    return { ok: true, status: "advanced", nextNodeCode: nextImg };
   }
 
   async function loadHydratedFlowSessionData(params: {

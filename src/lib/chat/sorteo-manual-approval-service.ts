@@ -11,14 +11,10 @@ import {
   SORTEO_COMPROBANTE_VALIDACION_ID_FIELD,
 } from "@/lib/chat/comprobante-validation-types";
 import {
-  findResumeNodeForMissingFields,
   realignManualApprovalFlowSessionPointer,
   runManualApprovalResumeParticipantFlow,
 } from "@/lib/chat/sorteo-manual-approval-resume-flow";
-import {
-  isParticipantDataCompleteForSorteoClose,
-  listMissingParticipantFieldKinds,
-} from "@/lib/sorteos/sorteo-participant-preflight";
+import { describeFlowCaptureCompletenessForLogs } from "@/lib/sorteos/sorteo-flow-capture-order";
 import { loadHydratedFlowSessionData } from "@/lib/chat/flow-engine-service";
 import { deliverSorteoPostOrderToCustomer } from "@/lib/chat/sorteo-post-order-customer-delivery";
 import { buildOrderResultFromEntradaId } from "@/lib/sorteos/sorteo-ticket-admin";
@@ -231,14 +227,20 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
     [SORTEO_COMPROBANTE_MOTIVO_VALIDACION_FIELD]: "asesor_aprobo_comprobante",
   };
 
-  const participantOk = isParticipantDataCompleteForSorteoClose(hydFd);
+  const flowCompleteness = await describeFlowCaptureCompletenessForLogs(
+    tenantSb,
+    input.empresaId,
+    flowCode,
+    hydFd
+  );
+  const participantOk = !flowCompleteness?.firstIncomplete;
   if (!participantOk) {
-    const missingKinds = listMissingParticipantFieldKinds(hydFd);
     logManual("missing-fields", {
       schema: dataSchema,
       empresa_id: input.empresaId,
       validation_id: row.id,
-      missing: missingKinds,
+      missing: flowCompleteness?.missing_fields ?? [],
+      flow_required_fields: flowCompleteness?.required_fields ?? [],
     });
 
     if (
@@ -265,7 +267,7 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
           ok: true,
           mode: "pending_participant_data",
           reused: true,
-          missingFields: missingKinds,
+          missingFields: flowCompleteness?.missing_fields ?? [],
           nextNodeCode: null,
         };
       }
@@ -298,18 +300,19 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
         ok: true,
         mode: "pending_participant_data",
         reused: true,
-        missingFields: missingKinds,
+        missingFields: flowCompleteness?.missing_fields ?? [],
         nextNodeCode: null,
         sessionRealigned: ra.realigned,
       };
     }
 
-    const resumeTarget = await findResumeNodeForMissingFields(
-      tenantSb,
-      input.empresaId,
-      flowCode,
-      missingKinds
-    );
+    const resumeTarget = flowCompleteness?.firstIncomplete
+      ? {
+          nodeCode: flowCompleteness.firstIncomplete.nodeCode,
+          messageText: flowCompleteness.firstIncomplete.messageText,
+          saveAsField: flowCompleteness.firstIncomplete.saveAsField,
+        }
+      : null;
     if (!resumeTarget) {
       logManual("error", { code: "no_resume_node", validation_id: row.id });
       return {
@@ -351,6 +354,13 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
       next_node: resumeTarget.nodeCode,
     });
 
+    console.info("[sorteo-manual-approval][resume-node-selected]", {
+      missing_fields: flowCompleteness?.missing_fields ?? [],
+      selected_node_code: resumeTarget.nodeCode,
+      selected_save_as_field: resumeTarget.saveAsField,
+      selection_reason: "flow_order",
+    });
+
     try {
       const wOut = await runManualApprovalResumeParticipantFlow({
         supabase: tenantSb,
@@ -362,7 +372,7 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
         channelId,
         contactId,
         validationId: row.id,
-        missingFields: missingKinds,
+        missingFields: flowCompleteness?.missing_fields ?? [],
         nextNodeCode: resumeTarget.nodeCode,
         note,
         mergedFlowDataPatch: {},
@@ -383,7 +393,7 @@ export async function approveComprobanteAndCloseSorteoPurchase(input: {
         ok: true,
         mode: "pending_participant_data",
         reused: false,
-        missingFields: missingKinds,
+        missingFields: flowCompleteness?.missing_fields ?? [],
         nextNodeCode: resumeTarget.nodeCode,
         whatsappWarning: wOut.whatsappWarning,
       };
