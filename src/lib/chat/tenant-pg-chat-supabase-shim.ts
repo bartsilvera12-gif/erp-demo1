@@ -49,6 +49,8 @@ type Filter =
   | { k: "eq"; col: string; val: unknown }
   | { k: "neq"; col: string; val: unknown }
   | { k: "is"; col: string; val: unknown }
+  /** PostgREST `.not(col, "is", null)` → columna IS NOT NULL */
+  | { k: "isNotNull"; col: string }
   | { k: "in"; col: string; val: unknown[] }
   | { k: "ilike"; col: string; val: string }
   | { k: "gte"; col: string; val: unknown }
@@ -174,6 +176,25 @@ export function createTenantPgChatSupabaseShim(opts: TenantPgChatSupabaseShimOpt
       this.filters.push({ k: "is", col, val });
       return this;
     }
+
+    /**
+     * Subconjunto PostgREST; lo usa `campaign-recipient-resolve` y otras consultas:
+     * `.not("sent_at", "is", null)` → `sent_at IS NOT NULL`
+     * `.not("x", "eq", v)` → `x <> v`
+     */
+    not(col: string, op: string, val: unknown) {
+      const o = op.trim().toLowerCase();
+      if (o === "is" && val === null) {
+        this.filters.push({ k: "isNotNull", col });
+        return this;
+      }
+      if (o === "eq") {
+        this.filters.push({ k: "neq", col, val });
+        return this;
+      }
+      throw new Error(`[tenant-pg-shim] .not("${col}", "${op}", …) no soportado`);
+    }
+
     in(col: string, val: unknown[]) {
       this.filters.push({ k: "in", col, val });
       return this;
@@ -222,9 +243,11 @@ export function createTenantPgChatSupabaseShim(opts: TenantPgChatSupabaseShimOpt
           parts.push(`${qc} = ${pushParam(params, f.val)}`);
         } else if (f.k === "neq") {
           parts.push(`${qc} <> ${pushParam(params, f.val)}`);
-        } else if (f.k === "is") {
+        } else         if (f.k === "is") {
           if (f.val === null) parts.push(`${qc} IS NULL`);
           else parts.push(`${qc} IS NOT NULL`);
+        } else if (f.k === "isNotNull") {
+          parts.push(`${qc} IS NOT NULL`);
         } else if (f.k === "in") {
           const arr = f.val as unknown[];
           if (arr.length === 0) parts.push("FALSE");
@@ -480,6 +503,7 @@ export function createTenantPgChatSupabaseShim(opts: TenantPgChatSupabaseShimOpt
         eq: (c: string, v: unknown) => q.eq(c, v),
         neq: (c: string, v: unknown) => q.neq(c, v),
         is: (c: string, v: unknown) => q.is(c, v),
+        not: (c: string, op: string, v: unknown) => q.not(c, op, v),
         in: (c: string, v: unknown[]) => q.in(c, v),
         ilike: (c: string, v: string) => q.ilike(c, v),
         gte: (c: string, v: unknown) => q.gte(c, v),
