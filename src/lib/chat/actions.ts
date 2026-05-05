@@ -1519,6 +1519,8 @@ export type YCloudWhatsappChannelInput = {
   ycloud_webhook_secret?: string;
   ycloud_sender_id?: string;
   ycloud_channel_id?: string;
+  /** WABA / identificador de cuenta en API de plantillas YCloud (`/v2/whatsapp/wabas/{id}/...`). */
+  ycloud_waba_id?: string;
   /** Misma persistencia que Meta: validación de comprobantes, automatización, estado UI de secciones. */
   comprobante_validation?: Record<string, unknown>;
   business_automation?: Record<string, unknown>;
@@ -1566,6 +1568,10 @@ export async function saveYCloudWhatsappChannel(input: YCloudWhatsappChannelInpu
   if (input.ycloud_channel_id !== undefined) {
     const s = input.ycloud_channel_id.trim();
     if (s) config.ycloud_channel_id = s;
+  }
+  if (input.ycloud_waba_id !== undefined) {
+    const s = input.ycloud_waba_id.trim();
+    if (s) config.ycloud_waba_id = s;
   }
 
   if (input.comprobante_validation !== undefined) {

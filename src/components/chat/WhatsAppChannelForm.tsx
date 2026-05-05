@@ -76,6 +76,7 @@ function ycloudRowToLocal(row: ChatChannelRow) {
     ycloud_webhook_secret: typeof cfg.ycloud_webhook_secret === "string" ? cfg.ycloud_webhook_secret : "",
     ycloud_sender_id: typeof cfg.ycloud_sender_id === "string" ? cfg.ycloud_sender_id : "",
     ycloud_channel_id: typeof cfg.ycloud_channel_id === "string" ? cfg.ycloud_channel_id : "",
+    ycloud_waba_id: typeof cfg.ycloud_waba_id === "string" ? cfg.ycloud_waba_id : "",
   };
 }
 
@@ -133,12 +134,15 @@ export function WhatsAppChannelForm({
     mode === "edit" && initialRow ? rowToForm(initialRow) : emptyWhatsAppChannelForm()
   );
   const [yc, setYc] = useState(() =>
-    mode === "edit" && initialRow && isYcloud ? ycloudRowToLocal(initialRow) : {
-        ycloud_api_key: "",
-        ycloud_webhook_secret: "",
-        ycloud_sender_id: "",
-        ycloud_channel_id: "",
-      }
+    mode === "edit" && initialRow && isYcloud
+      ? ycloudRowToLocal(initialRow)
+      : {
+          ycloud_api_key: "",
+          ycloud_webhook_secret: "",
+          ycloud_sender_id: "",
+          ycloud_channel_id: "",
+          ycloud_waba_id: "",
+        }
   );
   const [cvSettings, setCvSettings] = useState<ComprobanteValidationSettings>(() => {
     const cv =
@@ -208,6 +212,7 @@ export function WhatsAppChannelForm({
             ycloud_webhook_secret: yc.ycloud_webhook_secret,
             ycloud_sender_id: yc.ycloud_sender_id,
             ycloud_channel_id: yc.ycloud_channel_id,
+            ycloud_waba_id: yc.ycloud_waba_id,
             comprobante_validation: cvPayload,
             business_automation: baPayload,
             form_section_state: fsPayload,
@@ -223,6 +228,7 @@ export function WhatsAppChannelForm({
             ycloud_webhook_secret: yc.ycloud_webhook_secret,
             ycloud_sender_id: yc.ycloud_sender_id,
             ycloud_channel_id: yc.ycloud_channel_id,
+            ycloud_waba_id: yc.ycloud_waba_id,
             comprobante_validation: cvPayload,
             business_automation: baPayload,
             form_section_state: fsPayload,
@@ -270,7 +276,7 @@ export function WhatsAppChannelForm({
 
   const credTitle = isYcloud ? "Credenciales YCloud (coexistencia)" : "Credenciales y conexión";
   const credDescription = isYcloud
-    ? "API key, secret de webhook e identificadores del canal en YCloud. El resto de opciones es común con Meta."
+    ? "API key, secret de webhook, WABA ID (cuenta WhatsApp Business) e identificadores YCloud. El WABA es el que usa la API de plantillas para campañas."
     : "Identificadores Meta, token para enviar mensajes y estado del canal en el ERP.";
 
   return (
@@ -344,6 +350,21 @@ export function WhatsAppChannelForm({
                         onChange={(e) => setYc((p) => ({ ...p, ycloud_channel_id: e.target.value }))}
                       />
                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-500 uppercase mb-1">
+                      WABA ID (WhatsApp Business Account)
+                    </label>
+                    <input
+                      className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono bg-white"
+                      value={yc.ycloud_waba_id}
+                      onChange={(e) => setYc((p) => ({ ...p, ycloud_waba_id: e.target.value }))}
+                      placeholder="ID de la cuenta de negocio (plantillas / campañas)"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Si ya cargaste Channel ID y el envío funciona pero fallan las campañas, pegá aquí el WABA que
+                      muestra YCloud para esa cuenta.
+                    </p>
                   </div>
                 </>
               ) : (

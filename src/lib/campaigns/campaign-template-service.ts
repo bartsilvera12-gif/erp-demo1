@@ -20,7 +20,9 @@ export async function syncCampaignTemplatesForChannel(params: {
 
   const { data: ch, error: chErr } = await supabase
     .from("chat_channels")
-    .select("id, empresa_id, provider, type, config, meta_phone_number_id, whatsapp_access_token, activo")
+    .select(
+      "id, empresa_id, provider, type, config, meta_phone_number_id, whatsapp_access_token, activo, provider_channel_id"
+    )
     .eq("id", channelId)
     .eq("empresa_id", empresaId)
     .maybeSingle();
@@ -77,14 +79,18 @@ export async function syncCampaignTemplatesForChannel(params: {
           ? cfg.meta_waba_id.trim()
           : typeof channel.provider_channel_id === "string"
             ? String(channel.provider_channel_id).trim()
-            : "";
+            : typeof cfg.ycloud_channel_id === "string"
+              ? cfg.ycloud_channel_id.trim()
+              : "";
     if (!apiKey) {
       return { inserted: 0, error: "Canal YCloud: falta ycloud_api_key en la configuración." };
     }
     if (!waba) {
       return {
         inserted: 0,
-        error: "Canal YCloud: falta WABA id (config.ycloud_waba_id o meta_waba_id / provider_channel_id).",
+        error:
+          "El canal YCloud seleccionado no tiene configurado el identificador de la cuenta de WhatsApp Business (WABA). " +
+          "Editá el canal en Configuración → Canales, completá “WABA ID” o “Channel ID” según YCloud, y volvé a sincronizar plantillas.",
       };
     }
     rows = await fetchYCloudApprovedTemplates({ apiKey, wabaId: waba });
