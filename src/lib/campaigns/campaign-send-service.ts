@@ -9,7 +9,10 @@ import {
   isHttpsUrl,
   templateSnapshotHasHeaderImage,
 } from "@/lib/campaigns/campaign-header-image";
-import { buildMetaCloudTemplatePayload } from "@/lib/campaigns/campaign-template-payload";
+import {
+  buildCampaignTemplatePreviewText,
+  buildMetaCloudTemplatePayload,
+} from "@/lib/campaigns/campaign-template-payload";
 import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema";
 
 export type CampaignOutboundRow = {
@@ -129,6 +132,60 @@ function mappedVarsToSlotRecord(mapped: Record<string, unknown>): Record<string,
   return out;
 }
 
+async function persistCampaignTemplateOutboundMessage(params: {
+  supabase: SupabaseAdmin;
+  campaign: CampaignOutboundRow;
+  recipientId: string;
+  conversationId: string;
+  waMessageId: string | null;
+  mappedBySlot: Record<string, string>;
+  providerLabel: string;
+}): Promise<void> {
+  const previewText = buildCampaignTemplatePreviewText({
+    templateName: params.campaign.template_name,
+    languageCode: params.campaign.template_language,
+    componentsSnapshot: params.campaign.template_components_json as unknown[],
+    mappedBySlot: params.mappedBySlot,
+  });
+  const ts = new Date().toISOString();
+  const rawPayload: Record<string, unknown> = {
+    source: "campaign_outbound",
+    campaign_id: params.campaign.id,
+    campaign_recipient_id: params.recipientId,
+    template_name: params.campaign.template_name,
+    template_language: params.campaign.template_language,
+    provider: params.providerLabel,
+  };
+  if (params.waMessageId) {
+    rawPayload.provider_message_id = params.waMessageId;
+  }
+
+  const { error: insErr } = await params.supabase.from("chat_messages").insert({
+    empresa_id: params.campaign.empresa_id,
+    conversation_id: params.conversationId,
+    wa_message_id: params.waMessageId,
+    from_me: true,
+    sender_type: "system",
+    automation_source: "campaign",
+    message_type: "template",
+    content: previewText,
+    raw_payload: rawPayload,
+  });
+  if (insErr) {
+    console.warn("[campaign-send] persist_chat_message_failed", insErr.message);
+    return;
+  }
+
+  await params.supabase
+    .from("chat_conversations")
+    .update({
+      last_message_at: ts,
+      last_message_preview: previewText.slice(0, 280),
+      updated_at: ts,
+    })
+    .eq("id", params.conversationId);
+}
+
 export type SendCampaignRecipientResult =
   | { ok: true; waMessageId: string | null }
   | { ok: false; error: string; code?: string };
@@ -210,6 +267,15 @@ export async function sendCampaignRecipientMessage(params: {
         code: res.status != null ? String(res.status) : undefined,
       };
     }
+    await persistCampaignTemplateOutboundMessage({
+      supabase,
+      campaign,
+      recipientId: recipient.id,
+      conversationId: ensured.conversation_id,
+      waMessageId: res.waMessageId,
+      mappedBySlot,
+      providerLabel: "ycloud",
+    });
     return { ok: true, waMessageId: res.waMessageId };
   }
 
@@ -231,5 +297,14 @@ export async function sendCampaignRecipientMessage(params: {
       code: res.status != null ? String(res.status) : undefined,
     };
   }
+  await persistCampaignTemplateOutboundMessage({
+    supabase,
+    campaign,
+    recipientId: recipient.id,
+    conversationId: ensured.conversation_id,
+    waMessageId: res.waMessageId,
+    mappedBySlot,
+    providerLabel: "meta",
+  });
   return { ok: true, waMessageId: res.waMessageId };
 }

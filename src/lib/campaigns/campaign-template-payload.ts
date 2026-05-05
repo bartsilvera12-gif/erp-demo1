@@ -81,3 +81,28 @@ export function buildMetaCloudTemplatePayload(params: {
 
   return template;
 }
+
+/**
+ * Texto legible para inbox (plantilla + cuerpo con variables resueltas).
+ */
+export function buildCampaignTemplatePreviewText(params: {
+  templateName: string;
+  languageCode: string;
+  componentsSnapshot: unknown[];
+  mappedBySlot: Record<string, string>;
+}): string {
+  const comps = Array.isArray(params.componentsSnapshot)
+    ? (params.componentsSnapshot as { type?: string; text?: string }[])
+    : [];
+  const body = comps.find((c) => String(c.type ?? "").toUpperCase() === "BODY");
+  let bodyText = String(body?.text ?? "").trim();
+  if (bodyText) {
+    bodyText = bodyText.replace(/\{\{(\d+)\}\}/g, (_, slot) => {
+      const v = params.mappedBySlot[slot];
+      return v !== undefined && v !== null ? String(v).trim() : `{{${slot}}}`;
+    });
+  }
+  const title = `Plantilla: ${params.templateName} · ${params.languageCode}`;
+  if (bodyText) return `${title}\n\n${bodyText}`;
+  return `${title}\n\n(Sin cuerpo de texto en snapshot)`;
+}
