@@ -1309,8 +1309,10 @@ export async function processInboundWebhookValue(
             (convDbAfterUnread as { human_taken_over?: boolean | null }).human_taken_over ??
             ec.human_taken_over ??
             false,
-          active_flow_session_id: (convDbAfterUnread as { active_flow_session_id?: string | null })
-            .active_flow_session_id,
+          active_flow_session_id:
+            (convDbAfterUnread as { active_flow_session_id?: string | null }).active_flow_session_id ??
+            ec.active_flow_session_id ??
+            null,
         };
       }
       flowTrace("webhook_pre_engine_db_snapshot", {
