@@ -1,4 +1,5 @@
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import { serializeUnknownError } from "@/lib/errors/serialize-unknown-error";
 import { clearBrowserEmpresaDataSchemaCache } from "@/lib/supabase/browser-data-client";
 import { usuarioEmailLookupVariants } from "@/lib/auth/usuario-email-variants";
 import { supabase } from "./supabase";
@@ -63,7 +64,7 @@ export async function getCurrentUser(): Promise<CurrentUsuario | null> {
       .select("*")
       .eq("auth_user_id", user.id)
       .limit(1);
-    if (errAuth) throw errAuth;
+    if (errAuth) throw new Error(serializeUnknownError(errAuth));
     const rowAuth = byAuth?.[0] as CurrentUsuario | undefined;
     if (rowAuth) return rowAuth;
   }
@@ -77,7 +78,7 @@ export async function getCurrentUser(): Promise<CurrentUsuario | null> {
       .select("*")
       .ilike("email", em)
       .limit(1);
-    if (error) throw error;
+    if (error) throw new Error(serializeUnknownError(error));
     const row = rows?.[0] as CurrentUsuario | undefined;
     if (row) return row;
   }

@@ -10,6 +10,10 @@ import {
 } from "@/components/config/global-config-primitives";
 import { GlobalConfigSubpageShell } from "@/components/config/GlobalConfigSubpageShell";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
+import {
+  getUnknownErrorKeys,
+  serializeUnknownError,
+} from "@/lib/errors/serialize-unknown-error";
 import { getCurrentUser } from "@/lib/auth";
 import { esRolAdminEmpresaOGlobal } from "@/lib/auth/rol-empresa";
 
@@ -132,8 +136,14 @@ export default function ConfiguracionComisionesPage() {
         );
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(`Excepción al cargar ${POLITICA_ENDPOINT} — ${msg} — trace ${traceCliente}`);
+      const serialized = serializeUnknownError(e);
+      console.warn("[configuracion/comisiones] cargar excepción", {
+        traceId: traceCliente,
+        endpoint: POLITICA_ENDPOINT,
+        error: serialized,
+        errorKeys: getUnknownErrorKeys(e),
+      });
+      setError(`Excepción al cargar ${POLITICA_ENDPOINT} — ${serialized} — trace ${traceCliente}`);
     } finally {
       setLoading(false);
     }
@@ -174,7 +184,13 @@ export default function ConfiguracionComisionesPage() {
       setSuccess(true);
       setTimeout(() => setSuccess(false), 4000);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo guardar");
+      const serialized = serializeUnknownError(e);
+      console.warn("[configuracion/comisiones] guardar excepción", {
+        endpoint: "/api/comisiones/politica",
+        error: serialized,
+        errorKeys: getUnknownErrorKeys(e),
+      });
+      setError(serialized || "No se pudo guardar");
     } finally {
       setGuardando(false);
     }
