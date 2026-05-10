@@ -491,6 +491,12 @@ export default function EditarSorteoPage() {
         >
           Tickets / Comprobantes
         </Link>
+        <Link
+          href={`/sorteos/${encodeURIComponent(id)}/imprimir-cupones`}
+          className="inline-flex items-center rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+        >
+          Imprimir cupones para urna
+        </Link>
       </div>
       <p className="text-sm text-slate-600 max-w-3xl">
         El botón <strong className="font-medium text-slate-800">Tickets / Comprobantes</strong> abre el reservorio de
