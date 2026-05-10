@@ -1,4 +1,19 @@
 import type { SupabaseAdmin } from "@/lib/chat/types";
+import { WA_META_REPLY_BUTTON_MAX, WA_META_REPLY_TITLE_MAX } from "@/lib/chat/whatsapp-send-service";
+
+/** Acciones configurables por botón en message_config.buttons_json (solo persistencia FASE 1). */
+export type RecontactButtonAction =
+  | "continuar_flujo_actual"
+  | "iniciar_otro_flujo"
+  | "enviar_texto"
+  | "transferir_humano";
+
+const BUTTON_ACTIONS = new Set<string>([
+  "continuar_flujo_actual",
+  "iniciar_otro_flujo",
+  "enviar_texto",
+  "transferir_humano",
+]);
 
 export type PurchaseCondition = "none" | "no_confirmed_sorteo_order";
 
@@ -164,6 +179,72 @@ function normalizeGuard(raw: unknown): Record<string, unknown> {
   return base;
 }
 
+function sanitizeButtonsFromDb(raw: unknown): unknown[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of raw.slice(0, WA_META_REPLY_BUTTON_MAX)) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    const label =
+      typeof o.label === "string" ? o.label.trim().slice(0, WA_META_REPLY_TITLE_MAX) : "";
+    const actionRaw = typeof o.action === "string" ? o.action.trim() : "";
+    if (!label || !BUTTON_ACTIONS.has(actionRaw)) continue;
+    const row: Record<string, unknown> = { label, action: actionRaw };
+    if (typeof o.flow_code === "string" && o.flow_code.trim()) row.flow_code = o.flow_code.trim();
+    if (typeof o.node_code === "string" && o.node_code.trim()) row.node_code = o.node_code.trim();
+    if (typeof o.text_body === "string" && o.text_body.trim()) row.text_body = o.text_body.trim();
+    out.push(row);
+  }
+  return out;
+}
+
+export function validateAndNormalizeButtonsJson(raw: unknown, validNodeCodes: Set<string>): unknown[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new Error("buttons_json debe ser un arreglo");
+  if (raw.length > WA_META_REPLY_BUTTON_MAX) {
+    throw new Error(`Como máximo ${WA_META_REPLY_BUTTON_MAX} botones (límite WhatsApp reply)`);
+  }
+
+  const out: Record<string, unknown>[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`Botón ${i + 1}: formato inválido`);
+    }
+    const o = item as Record<string, unknown>;
+    const label = typeof o.label === "string" ? o.label.trim() : "";
+    if (!label) throw new Error(`Botón ${i + 1}: el texto del botón es obligatorio`);
+    if (label.length > WA_META_REPLY_TITLE_MAX) {
+      throw new Error(`Botón ${i + 1}: máximo ${WA_META_REPLY_TITLE_MAX} caracteres (WhatsApp reply)`);
+    }
+    const action = typeof o.action === "string" ? o.action.trim() : "";
+    if (!BUTTON_ACTIONS.has(action)) throw new Error(`Botón ${i + 1}: acción inválida`);
+
+    const row: Record<string, unknown> = { label, action };
+
+    if (action === "continuar_flujo_actual") {
+      const nc = typeof o.node_code === "string" ? o.node_code.trim() : "";
+      if (!nc) throw new Error(`Botón ${i + 1}: elegí el nodo destino en este flujo`);
+      if (!validNodeCodes.has(nc)) throw new Error(`Botón ${i + 1}: el nodo no pertenece a este flujo`);
+      row.node_code = nc;
+    } else if (action === "iniciar_otro_flujo") {
+      const fc = typeof o.flow_code === "string" ? o.flow_code.trim() : "";
+      if (!fc) throw new Error(`Botón ${i + 1}: indicá el código del flujo destino`);
+      row.flow_code = fc;
+      const nc = typeof o.node_code === "string" ? o.node_code.trim() : "";
+      if (!nc) throw new Error(`Botón ${i + 1}: indicá el nodo destino`);
+      row.node_code = nc;
+    } else if (action === "enviar_texto") {
+      const tb = typeof o.text_body === "string" ? o.text_body.trim() : "";
+      if (!tb) throw new Error(`Botón ${i + 1}: el texto a enviar es obligatorio`);
+      row.text_body = tb;
+    }
+
+    out.push(row);
+  }
+  return out;
+}
+
 function normalizeSchedule(raw: unknown): Record<string, unknown> {
   if (raw === undefined || raw === null) return {};
   if (typeof raw !== "object" || Array.isArray(raw)) throw new Error("schedule_config inválido");
@@ -180,7 +261,7 @@ function normalizeSchedule(raw: unknown): Record<string, unknown> {
   return out;
 }
 
-function normalizeMessage(raw: unknown): Record<string, unknown> {
+function normalizeMessage(raw: unknown, validNodeCodes?: Set<string>): Record<string, unknown> {
   const base: Record<string, unknown> = {
     message_type: "session_text",
     session_text: "",
@@ -191,14 +272,18 @@ function normalizeMessage(raw: unknown): Record<string, unknown> {
   const o = raw as Record<string, unknown>;
   const mt = o.message_type === "whatsapp_template" ? "whatsapp_template" : "session_text";
   base.message_type = mt;
+  const buttonsSrc = o.buttons_json;
+  const buttons =
+    validNodeCodes !== undefined
+      ? validateAndNormalizeButtonsJson(buttonsSrc, validNodeCodes)
+      : sanitizeButtonsFromDb(buttonsSrc);
+  base.buttons_json = buttons;
   if (mt === "session_text") {
     base.session_text = typeof o.session_text === "string" ? o.session_text : "";
-    if (o.buttons_json !== undefined) base.buttons_json = o.buttons_json ?? [];
   } else {
     base.template_name = typeof o.template_name === "string" ? o.template_name.trim() : "";
     base.template_language = typeof o.template_language === "string" ? o.template_language.trim() : "";
     base.template_components = o.template_components ?? {};
-    if (o.buttons_json !== undefined) base.buttons_json = o.buttons_json ?? [];
   }
   return base;
 }
@@ -266,7 +351,7 @@ export function normalizeCreatePayload(
     cooldown_seconds,
     schedule_config: normalizeSchedule(body.schedule_config),
     guard_config: normalizeGuard(body.guard_config),
-    message_config: normalizeMessage(body.message_config),
+    message_config: normalizeMessage(body.message_config, validNodeCodes),
   };
 }
 
@@ -330,7 +415,7 @@ export function mergePatchPayload(
   }
   if ("schedule_config" in body) next.schedule_config = normalizeSchedule(body.schedule_config);
   if ("guard_config" in body) next.guard_config = normalizeGuard(body.guard_config);
-  if ("message_config" in body) next.message_config = normalizeMessage(body.message_config);
+  if ("message_config" in body) next.message_config = normalizeMessage(body.message_config, validNodeCodes);
 
   return next;
 }

@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import type {
   PurchaseCondition,
+  RecontactButtonAction,
   RecontactRuleRowOut,
 } from "@/lib/chat/recontact-rules-validation";
+import { WA_META_REPLY_BUTTON_MAX, WA_META_REPLY_TITLE_MAX } from "@/lib/chat/whatsapp-send-service";
 
 export type FlowRecontactPickerNode = {
   node_code: string;
@@ -35,6 +37,114 @@ function parseGuard(raw: unknown): ReturnType<typeof guardDefaults> {
   return d;
 }
 
+type MessageButtonDraft = {
+  id: string;
+  label: string;
+  action: RecontactButtonAction;
+  flow_code: string;
+  node_code: string;
+  text_body: string;
+};
+
+function newButtonId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `b-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function newButtonDraft(): MessageButtonDraft {
+  return {
+    id: newButtonId(),
+    label: "",
+    action: "continuar_flujo_actual",
+    flow_code: "",
+    node_code: "",
+    text_body: "",
+  };
+}
+
+const ACTION_OPTIONS: { value: RecontactButtonAction; label: string }[] = [
+  { value: "continuar_flujo_actual", label: "Continuar en este flujo (nodo)" },
+  { value: "iniciar_otro_flujo", label: "Iniciar otro flujo" },
+  { value: "enviar_texto", label: "Enviar texto" },
+  { value: "transferir_humano", label: "Transferir a humano" },
+];
+
+function parseButtonsFromMessageConfig(mc: Record<string, unknown>): MessageButtonDraft[] {
+  const raw = mc.buttons_json;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, WA_META_REPLY_BUTTON_MAX)
+    .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item)))
+    .map((o) => {
+      const actionRaw = typeof o.action === "string" ? o.action.trim() : "";
+      const action = (
+      [
+        "continuar_flujo_actual",
+        "iniciar_otro_flujo",
+        "enviar_texto",
+        "transferir_humano",
+      ].includes(actionRaw)
+        ? actionRaw
+          : "continuar_flujo_actual"
+      ) as RecontactButtonAction;
+      return {
+        id: newButtonId(),
+        label: typeof o.label === "string" ? o.label : "",
+        action,
+        flow_code: typeof o.flow_code === "string" ? o.flow_code : "",
+        node_code: typeof o.node_code === "string" ? o.node_code : "",
+        text_body: typeof o.text_body === "string" ? o.text_body : "",
+      };
+    });
+}
+
+function buttonsToPayloadJson(buttons: MessageButtonDraft[]): unknown[] {
+  return buttons.map((b) => {
+    const row: Record<string, unknown> = {
+      label: b.label.trim(),
+      action: b.action,
+    };
+    if (b.action === "continuar_flujo_actual") {
+      row.node_code = b.node_code.trim();
+    } else if (b.action === "iniciar_otro_flujo") {
+      row.flow_code = b.flow_code.trim();
+      row.node_code = b.node_code.trim();
+    } else if (b.action === "enviar_texto") {
+      row.text_body = b.text_body.trim();
+    }
+    return row;
+  });
+}
+
+function validateDraftButtonsLocal(
+  buttons: MessageButtonDraft[],
+  currentFlowNodeCodes: Set<string>
+): string | null {
+  if (buttons.length > WA_META_REPLY_BUTTON_MAX) {
+    return `Como máximo ${WA_META_REPLY_BUTTON_MAX} botones.`;
+  }
+  for (let i = 0; i < buttons.length; i++) {
+    const b = buttons[i];
+    const label = b.label.trim();
+    if (!label) return `Botón ${i + 1}: el texto es obligatorio.`;
+    if (label.length > WA_META_REPLY_TITLE_MAX) {
+      return `Botón ${i + 1}: máximo ${WA_META_REPLY_TITLE_MAX} caracteres (WhatsApp).`;
+    }
+    if (b.action === "continuar_flujo_actual") {
+      const nc = b.node_code.trim();
+      if (!nc) return `Botón ${i + 1}: elegí el nodo destino.`;
+      if (!currentFlowNodeCodes.has(nc)) return `Botón ${i + 1}: el nodo no existe en este flujo.`;
+    }
+    if (b.action === "iniciar_otro_flujo") {
+      if (!b.flow_code.trim()) return `Botón ${i + 1}: indicá el flujo destino.`;
+      if (!b.node_code.trim()) return `Botón ${i + 1}: indicá el nodo destino.`;
+    }
+    if (b.action === "enviar_texto" && !b.text_body.trim()) {
+      return `Botón ${i + 1}: el texto a enviar es obligatorio.`;
+    }
+  }
+  return null;
+}
+
 type Draft = {
   nombre: string;
   descripcion: string;
@@ -57,7 +167,7 @@ type Draft = {
   template_name: string;
   template_language: string;
   template_components_json: string;
-  buttons_json: string;
+  message_buttons: MessageButtonDraft[];
 };
 
 function emptyDraft(): Draft {
@@ -83,7 +193,7 @@ function emptyDraft(): Draft {
     template_name: "",
     template_language: "",
     template_components_json: "{}",
-    buttons_json: "[]",
+    message_buttons: [],
   };
 }
 
@@ -100,12 +210,6 @@ function rowToDraft(row: RecontactRuleRowOut): Draft {
       ? (row.message_config as Record<string, unknown>)
       : {};
   const mt = mc.message_type === "whatsapp_template" ? "whatsapp_template" : "session_text";
-  let buttons_json = "[]";
-  try {
-    buttons_json = JSON.stringify(mc.buttons_json ?? [], null, 2);
-  } catch {
-    buttons_json = "[]";
-  }
   let template_components_json = "{}";
   try {
     template_components_json = JSON.stringify(mc.template_components ?? {}, null, 2);
@@ -138,25 +242,18 @@ function rowToDraft(row: RecontactRuleRowOut): Draft {
     template_name: typeof mc.template_name === "string" ? mc.template_name : "",
     template_language: typeof mc.template_language === "string" ? mc.template_language : "",
     template_components_json,
-    buttons_json,
+    message_buttons: parseButtonsFromMessageConfig(mc),
   };
 }
 
 function draftToPayload(d: Draft): Record<string, unknown> {
-  const active_weekdays = d.weekdays.map((on, i) => (on ? i : null)).filter((x): x is number => x !== null);
-  let buttonsParsed: unknown = [];
-  try {
-    buttonsParsed = JSON.parse(d.buttons_json || "[]") as unknown;
-    if (!Array.isArray(buttonsParsed)) buttonsParsed = [];
-  } catch {
-    buttonsParsed = [];
-  }
   let template_components: unknown = {};
   try {
     template_components = JSON.parse(d.template_components_json || "{}") as unknown;
   } catch {
     template_components = {};
   }
+  const buttonsParsed = buttonsToPayloadJson(d.message_buttons);
   const message_config =
     d.message_type === "session_text"
       ? {
@@ -186,7 +283,10 @@ function draftToPayload(d: Draft): Record<string, unknown> {
       window_start: d.window_start.trim() || null,
       window_end: d.window_end.trim() || null,
       timezone: d.timezone.trim() || null,
-      active_weekdays: active_weekdays.length ? active_weekdays : null,
+      active_weekdays: (() => {
+        const active_weekdays = d.weekdays.map((on, i) => (on ? i : null)).filter((x): x is number => x !== null);
+        return active_weekdays.length ? active_weekdays : null;
+      })(),
     },
     guard_config: {
       skip_if_human_taken_over: d.skip_human,
@@ -199,11 +299,19 @@ function draftToPayload(d: Draft): Record<string, unknown> {
 
 const WEEKDAY_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
+const FASE1_NOTICE =
+  "Esta automatización solo guarda configuración. Todavía no envía mensajes automáticamente.";
+
 export function FlowRecontactAutomationsPanel(props: {
   flowCode: string;
   nodePickerOptions: FlowRecontactPickerNode[];
 }) {
   const { flowCode, nodePickerOptions } = props;
+  const currentFlowNodeCodes = useMemo(
+    () => new Set(nodePickerOptions.map((n) => n.node_code)),
+    [nodePickerOptions]
+  );
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -252,6 +360,12 @@ export function FlowRecontactAutomationsPanel(props: {
   }
 
   async function saveDraft() {
+    const localErr = validateDraftButtonsLocal(draft.message_buttons, currentFlowNodeCodes);
+    if (localErr) {
+      setError(localErr);
+      return;
+    }
+
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -332,6 +446,24 @@ export function FlowRecontactAutomationsPanel(props: {
     });
   }
 
+  function updateButton(id: string, patch: Partial<MessageButtonDraft>) {
+    setDraft((d) => ({
+      ...d,
+      message_buttons: d.message_buttons.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+    }));
+  }
+
+  function addButton() {
+    setDraft((d) => {
+      if (d.message_buttons.length >= WA_META_REPLY_BUTTON_MAX) return d;
+      return { ...d, message_buttons: [...d.message_buttons, newButtonDraft()] };
+    });
+  }
+
+  function removeButton(id: string) {
+    setDraft((d) => ({ ...d, message_buttons: d.message_buttons.filter((b) => b.id !== id) }));
+  }
+
   const msgLabel = (row: RecontactRuleRowOut) => {
     const mc = row.message_config as Record<string, unknown> | null | undefined;
     const t = mc?.message_type === "whatsapp_template" ? "Plantilla WhatsApp" : "Texto de sesión";
@@ -346,10 +478,11 @@ export function FlowRecontactAutomationsPanel(props: {
           Configurá recontactos automáticos para clientes que quedan detenidos en este flujo.
         </p>
         <div className="mt-3 rounded-lg border border-sky-100 bg-sky-50/80 px-3 py-2 text-sm text-sky-900">
-          <strong className="font-medium">Simulación (FASE 1)</strong>
-          <p className="mt-1 text-sky-900/90">
-            Esta automatización todavía no envía mensajes. En fases futuras el sistema buscará conversaciones detenidas
-            en estos nodos después del tiempo configurado.
+          <strong className="font-medium">FASE 1 — solo configuración</strong>
+          <p className="mt-1 text-sky-900/90">{FASE1_NOTICE}</p>
+          <p className="mt-2 text-sky-800/85 text-xs">
+            En fases futuras el sistema buscará conversaciones detenidas en los nodos elegidos después del tiempo de
+            inactividad.
           </p>
         </div>
         <button
@@ -384,7 +517,7 @@ export function FlowRecontactAutomationsPanel(props: {
                 <th className="px-3 py-2">Nodos</th>
                 <th className="px-3 py-2">Espera</th>
                 <th className="px-3 py-2">Intentos</th>
-                <th className="px-3 py-2">Cooldown</th>
+                <th className="px-3 py-2">Siguiente intento</th>
                 <th className="px-3 py-2">Mensaje</th>
                 <th className="px-3 py-2 text-right">Acciones</th>
               </tr>
@@ -449,6 +582,8 @@ export function FlowRecontactAutomationsPanel(props: {
                 ×
               </button>
             </div>
+
+            <p className="text-xs text-sky-800 bg-sky-50 border border-sky-100 rounded-lg px-3 py-2">{FASE1_NOTICE}</p>
 
             <label className="block text-xs text-slate-500 mb-1">Nombre</label>
             <input
@@ -541,7 +676,7 @@ export function FlowRecontactAutomationsPanel(props: {
                 />
               </div>
               <div className="col-span-2">
-                <label className="block text-xs text-slate-500 mb-1">Cooldown entre intentos (min)</label>
+                <label className="block text-xs text-slate-500 mb-1">Esperar antes del siguiente intento (min)</label>
                 <input
                   type="number"
                   min={1}
@@ -549,6 +684,9 @@ export function FlowRecontactAutomationsPanel(props: {
                   value={draft.cooldown_minutes}
                   onChange={(e) => setDraft((d) => ({ ...d, cooldown_minutes: Math.max(1, Number(e.target.value) || 1) }))}
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Ejemplo: 1440 minutos = 24 horas. Solo aplica si hay más de un intento.
+                </p>
               </div>
             </div>
 
@@ -683,13 +821,130 @@ export function FlowRecontactAutomationsPanel(props: {
                   />
                 </div>
               )}
-              <div>
-                <label className="text-xs text-slate-500">Botones / acciones futuras (JSON)</label>
-                <textarea
-                  className="w-full min-h-[64px] font-mono text-xs border border-slate-200 rounded-lg px-2 py-1"
-                  value={draft.buttons_json}
-                  onChange={(e) => setDraft((d) => ({ ...d, buttons_json: e.target.value }))}
-                />
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-800">Botones del mensaje</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Hasta {WA_META_REPLY_BUTTON_MAX} botones (límite WhatsApp). Texto máximo {WA_META_REPLY_TITLE_MAX}{" "}
+                      caracteres por botón.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={draft.message_buttons.length >= WA_META_REPLY_BUTTON_MAX}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-sky-200 bg-white text-sky-800 hover:bg-sky-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                    onClick={() => addButton()}
+                  >
+                    Agregar botón
+                  </button>
+                </div>
+
+                {draft.message_buttons.length === 0 ? (
+                  <p className="text-xs text-slate-500">Sin botones (mensaje solo texto o plantilla).</p>
+                ) : (
+                  <div className="space-y-3">
+                    {draft.message_buttons.map((btn, idx) => (
+                      <div key={btn.id} className="rounded-lg border border-slate-200 bg-white p-3 space-y-2 shadow-sm">
+                        <div className="flex justify-between items-center gap-2">
+                          <span className="text-xs font-medium text-slate-600">Botón {idx + 1}</span>
+                          <button
+                            type="button"
+                            className="text-xs text-red-600 hover:underline"
+                            onClick={() => removeButton(btn.id)}
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-500">Texto del botón</label>
+                          <input
+                            className="mt-0.5 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"
+                            maxLength={WA_META_REPLY_TITLE_MAX}
+                            value={btn.label}
+                            onChange={(e) => updateButton(btn.id, { label: e.target.value })}
+                            placeholder="Ej.: Continuar"
+                          />
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {btn.label.trim().length}/{WA_META_REPLY_TITLE_MAX}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-slate-500">Acción</label>
+                          <select
+                            className="mt-0.5 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"
+                            value={btn.action}
+                            onChange={(e) =>
+                              updateButton(btn.id, {
+                                action: e.target.value as RecontactButtonAction,
+                                flow_code: "",
+                                node_code: "",
+                                text_body: "",
+                              })
+                            }
+                          >
+                            {ACTION_OPTIONS.map((o) => (
+                              <option key={o.value} value={o.value}>
+                                {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {(btn.action === "continuar_flujo_actual" || btn.action === "iniciar_otro_flujo") && (
+                          <div>
+                            <label className="text-[11px] text-slate-500">
+                              Nodo destino {btn.action === "iniciar_otro_flujo" ? "(flujo otro)" : "(este flujo)"}
+                            </label>
+                            {btn.action === "continuar_flujo_actual" ? (
+                              <select
+                                className="mt-0.5 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm"
+                                value={btn.node_code}
+                                onChange={(e) => updateButton(btn.id, { node_code: e.target.value })}
+                              >
+                                <option value="">Elegir nodo…</option>
+                                {nodePickerOptions.map((n) => (
+                                  <option key={n.node_code} value={n.node_code}>
+                                    {n.node_code} — {n.label}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                className="mt-0.5 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-mono"
+                                value={btn.node_code}
+                                onChange={(e) => updateButton(btn.id, { node_code: e.target.value })}
+                                placeholder="código_nodo_destino"
+                              />
+                            )}
+                          </div>
+                        )}
+                        {btn.action === "iniciar_otro_flujo" && (
+                          <div>
+                            <label className="text-[11px] text-slate-500">Flujo destino (flow_code)</label>
+                            <input
+                              className="mt-0.5 w-full border border-slate-200 rounded-lg px-2 py-1.5 text-sm font-mono text-xs"
+                              value={btn.flow_code}
+                              onChange={(e) => updateButton(btn.id, { flow_code: e.target.value })}
+                              placeholder="ej.: sorteo_default"
+                            />
+                          </div>
+                        )}
+                        {btn.action === "enviar_texto" && (
+                          <div>
+                            <label className="text-[11px] text-slate-500">Texto a enviar</label>
+                            <textarea
+                              className="mt-0.5 w-full min-h-[64px] border border-slate-200 rounded-lg px-2 py-1.5 text-sm"
+                              value={btn.text_body}
+                              onChange={(e) => updateButton(btn.id, { text_body: e.target.value })}
+                              placeholder="Contenido del mensaje en una fase futura."
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
