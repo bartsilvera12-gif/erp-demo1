@@ -21,7 +21,10 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="z-40 flex h-16 shrink-0 items-center justify-end gap-3 border-b border-slate-200/90 bg-white/95 px-4 sm:px-6 shadow-[inset_0_-1px_0_0_rgba(10,37,64,0.05)] backdrop-blur-sm">
+    <header
+      id="neura-header"
+      className="z-40 flex h-16 shrink-0 items-center justify-end gap-3 border-b border-slate-200/90 bg-white/95 px-4 sm:px-6 shadow-[inset_0_-1px_0_0_rgba(10,37,64,0.05)] backdrop-blur-sm"
+    >
       <div className="flex items-center gap-2">
         {/* Notificaciones */}
         <button

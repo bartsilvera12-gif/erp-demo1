@@ -63,6 +63,58 @@ body {
   font-family: var(--font-plus-jakarta), system-ui, sans-serif;
 }
 
+/**
+ * Impresión cupones físicos (/sorteos/[id]/imprimir-cupones): el AppShell usa h-svh + overflow
+ * oculto en ancestros; en @media print eso suele dejar casi en blanco la hoja salvo cabecera/pie del navegador.
+ * La clase la agrega PhysicalCouponsPrintClient al montar.
+ */
+@media print {
+  html.physical-coupons-print-page,
+  html.physical-coupons-print-page body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  html.physical-coupons-print-page #neura-sidebar,
+  html.physical-coupons-print-page #neura-header {
+    display: none !important;
+  }
+
+  html.physical-coupons-print-page #neura-app-shell {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+
+  html.physical-coupons-print-page #neura-main-column {
+    display: block !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  html.physical-coupons-print-page #neura-main-content {
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  html.physical-coupons-print-page .physical-coupons-print-area {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: relative !important;
+    width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+}
+
 /* Fondo pantalla login (solo layout visual) */
 .zentra-login-bg {
   background:

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchWithSupabaseSession } from "@/lib/api/fetch-with-supabase-session";
 import type {
   EntradaImpresionContext,
@@ -25,6 +25,102 @@ function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Documento HTML mínimo solo con cupones (sin AppShell). Evita overflow/h-svh del ERP en impresión.
+ */
+function buildPhysicalCouponsPrintDocument(rows: PhysicalCouponPrintRow[], documentTitle: string): string {
+  const pages = chunk(rows, PER_PAGE);
+  const pagesHtml = pages
+    .map((pageRows) => {
+      const articles = pageRows
+        .map((row) => {
+          const nombre = row.nombre_participante ? escapeHtml(row.nombre_participante) : "";
+          const docLine = row.documento_masked ? `<p>Doc. ${escapeHtml(row.documento_masked)}</p>` : "";
+          const telLine = row.whatsapp_masked ? `<p>Tel. ${escapeHtml(row.whatsapp_masked)}</p>` : "";
+          return `
+            <article class="coupon-card">
+              <div class="coupon-top">
+                <p class="coupon-sorteo">${escapeHtml(row.sorteo_nombre)}</p>
+                <p class="coupon-numero">${escapeHtml(row.numero_cupon)}</p>
+                <p class="coupon-orden">Orden <strong>${escapeHtml(String(row.numero_orden))}</strong></p>
+              </div>
+              <div class="coupon-bottom">
+                ${nombre ? `<p class="coupon-nombre">${nombre}</p>` : `<p class="coupon-nombre muted">—</p>`}
+                ${docLine}
+                ${telLine}
+                <p class="coupon-fecha">${escapeHtml(row.fecha_display)}</p>
+              </div>
+            </article>`;
+        })
+        .join("");
+      const padCount = Math.max(0, PER_PAGE - pageRows.length);
+      const pads = Array.from({ length: padCount })
+        .map(() => `<div class="coupon-pad" aria-hidden="true"></div>`)
+        .join("");
+      return `<section class="coupon-page">${articles}${pads}</section>`;
+    })
+    .join("");
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>${escapeHtml(documentTitle)}</title>
+<style>
+  @page { size: A4; margin: 10mm; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; color: #0f172a; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .coupon-page {
+    display: grid;
+    grid-template-columns: repeat(${COLS}, minmax(0, 1fr));
+    gap: 10px;
+    grid-auto-rows: minmax(28mm, auto);
+    max-width: 190mm;
+    margin: 0 auto;
+    break-after: page;
+    page-break-after: always;
+  }
+  .coupon-page:last-child { break-after: auto; page-break-after: auto; }
+  .coupon-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px dashed #64748b;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+    background: #fff;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .coupon-sorteo { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 0; }
+  .coupon-numero { font-size: 1.625rem; font-weight: 800; margin: 4px 0; font-variant-numeric: tabular-nums; }
+  .coupon-orden { font-size: 12px; color: #475569; margin: 0; }
+  .coupon-bottom { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #334155; }
+  .coupon-nombre { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .coupon-nombre.muted { color: #94a3b8; }
+  .coupon-fecha { margin: 4px 0 0; color: #64748b; font-size: 11px; }
+  .coupon-pad { visibility: hidden; break-inside: avoid; }
+  @media print {
+    html, body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+${pagesHtml}
+</body>
+</html>`;
 }
 
 export default function PhysicalCouponsPrintClient({
@@ -61,8 +157,41 @@ export default function PhysicalCouponsPrintClient({
   const yaImpreso = Boolean(entradaContext?.cupones_impresos_at);
   const mostrarConfirmar = modoEntrada && Boolean(entradaId) && !yaImpreso && !confirmOk;
 
+  useEffect(() => {
+    document.documentElement.classList.add("physical-coupons-print-page");
+    return () => {
+      document.documentElement.classList.remove("physical-coupons-print-page");
+    };
+  }, []);
+
   function handlePrint() {
-    window.print();
+    if (rows.length === 0) return;
+    const title = sorteoNombre.trim() || "Cupones sorteo";
+    const html = buildPhysicalCouponsPrintDocument(rows, title);
+    /* Sin noopener en features: si no, algunos navegadores devuelven null y no podemos llamar a print(). */
+    const w = window.open("", "_blank");
+    if (!w) {
+      window.alert(
+        "No se pudo abrir la ventana de impresión. Permití ventanas emergentes para este sitio, o usá Ctrl+P en esta página."
+      );
+      return;
+    }
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+    const runPrint = () => {
+      try {
+        w.focus();
+        w.print();
+      } catch {
+        /* noop */
+      }
+    };
+    if (w.document.readyState === "complete") {
+      window.setTimeout(runPrint, 100);
+    } else {
+      w.addEventListener("load", () => window.setTimeout(runPrint, 100));
+    }
   }
 
   async function handleConfirmarImpresion() {
@@ -100,6 +229,10 @@ export default function PhysicalCouponsPrintClient({
           .no-print { display: none !important; }
           .print-page-break { break-after: page; page-break-after: always; }
           .print-page-break:last-child { break-after: auto; page-break-after: auto; }
+          .physical-coupons-print-area article {
+            break-inside: avoid;
+            page-break-inside: avoid;
+          }
         }
       `}</style>
 
@@ -128,6 +261,12 @@ export default function PhysicalCouponsPrintClient({
           ) : null}
           <p className="text-xs text-slate-500">
             Fecha en el cupón: se usa la fecha de pago si existe; si no, la fecha de creación de la orden.
+          </p>
+          <p className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+            <strong className="text-slate-800">Impresión:</strong> esta vista está pensada para hoja{" "}
+            <strong>A4</strong>. Si en el cuadro de impresión del navegador ves la URL o la fecha arriba/abajo,
+            desactivá <strong>«Encabezados y pies de página»</strong> (Chrome/Edge: Más ajustes / Options).
+            Para ticketera térmica habría que usar otro formato (mejora futura).
           </p>
         </div>
 
@@ -250,7 +389,7 @@ export default function PhysicalCouponsPrintClient({
           </div>
         ) : null}
 
-        <div className="no-print flex flex-wrap gap-2">
+        <div className="no-print flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <button
             type="button"
             onClick={handlePrint}
@@ -259,6 +398,10 @@ export default function PhysicalCouponsPrintClient({
           >
             Imprimir cupones
           </button>
+          <p className="text-xs text-slate-500 max-w-xl">
+            Se abrirá una ventana solo con los cupones (sin menú del ERP). Si la impresora muestra URL o fecha,
+            desactivá encabezados y pies de página en el diálogo de impresión.
+          </p>
 
           {mostrarConfirmar ? (
             <button
@@ -287,7 +430,10 @@ export default function PhysicalCouponsPrintClient({
           </button>
         </div>
 
-        <div className="print-area rounded-xl border border-slate-200 bg-white p-4 print:border-0 print:p-0">
+        <div
+          className="physical-coupons-print-area print-area rounded-xl border border-slate-200 bg-white p-4 print:border-0 print:p-0"
+          data-print-area="physical-coupons"
+        >
           {rows.length === 0 && !error ? (
             <p className="no-print text-sm text-slate-500">No hay cupones con los filtros seleccionados.</p>
           ) : null}
