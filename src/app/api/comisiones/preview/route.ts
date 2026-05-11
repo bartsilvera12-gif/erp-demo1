@@ -116,6 +116,14 @@ function roundMoney(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+function parseMesConsulta(request: Request): { year: number; month: number } | null {
+  const url = new URL(request.url);
+  const raw = (url.searchParams.get("mes") ?? url.searchParams.get("month") ?? "").trim();
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(raw);
+  if (!match) return null;
+  return { year: Number(match[1]), month: Number(match[2]) };
+}
+
 function saldoPendienteFactura(fac: FacturaPreviewRow, neto: number, pagadoFallback?: number): number {
   const saldo = Number(fac.saldo);
   if (Number.isFinite(saldo)) return roundMoney(Math.max(0, saldo));
@@ -273,7 +281,11 @@ export async function GET(request: Request) {
     const escalas = parseEscalas((escalasRows ?? []) as Record<string, unknown>[]);
     const sinEscalas = escalas.length === 0;
 
-    const period = computePreviewPeriod(new Date(), tz, modoPeriodo);
+    const mesConsulta = parseMesConsulta(request);
+    const periodAnchor = mesConsulta
+      ? new Date(Date.UTC(mesConsulta.year, mesConsulta.month - 1, 15, 12, 0, 0))
+      : new Date();
+    const period = computePreviewPeriod(periodAnchor, tz, modoPeriodo);
     const desdeYmd = period.fechaInicioLocal;
     const hastaYmd = period.fechaFinLocal;
 
@@ -645,6 +657,7 @@ export async function GET(request: Request) {
           fecha_fin_local: hastaYmd,
           periodo_inicio_utc: period.periodoInicioUtcIso,
           periodo_fin_utc: period.periodoFinUtcIso,
+          periodo_mes: period.fechaInicioLocal.slice(0, 7),
           politica_id: pid,
           politica_nombre: String(politica.nombre ?? ""),
           base_calculo: baseCalculo,
