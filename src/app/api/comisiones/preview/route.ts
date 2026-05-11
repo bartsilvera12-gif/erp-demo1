@@ -314,10 +314,21 @@ export async function GET(request: Request) {
 
     const { ncMap, alertaNetoSinNc } = await cargarNcAprobadasPorFacturaId(sb, empresaId);
 
-    const verTodoEmpresa =
-      esRolAdminEmpresaOGlobal(auth.rol) || isErpRolSupervisor(auth.rol);
-    const soloVendedor = isErpRolVendedor(auth.rol) && !verTodoEmpresa;
+    const clientesAsignadosAutenticado = clientesRows.filter((c) => {
+      const v = c.vendedor_usuario_id;
+      return typeof v === "string" && v.trim() === auth.usuarioCatalogId;
+    }).length;
+    const verTodoEmpresa = esRolAdminEmpresaOGlobal(auth.rol) || isErpRolSupervisor(auth.rol);
+    const rolVendedor = isErpRolVendedor(auth.rol);
+    const soloVendedor = !verTodoEmpresa;
     const vendedorScopeId = soloVendedor ? auth.usuarioCatalogId : null;
+    const vendedorDetectadoPor = !soloVendedor
+      ? "rol_admin"
+      : rolVendedor
+        ? "rol"
+        : clientesAsignadosAutenticado > 0
+          ? "clientes_asignados"
+          : "otro";
 
     const lineas: LineaPreview[] = [];
     let alertasSinVendedorPagos = 0;
@@ -663,6 +674,12 @@ export async function GET(request: Request) {
           base_calculo: baseCalculo,
           sin_escalas: sinEscalas,
           alcance: soloVendedor ? "solo_vendedor_autenticado" : "empresa",
+          viewer_role: auth.rol ?? null,
+          viewer_scope: soloVendedor ? "vendedor" : "admin",
+          viewer_usuario_id: auth.usuarioCatalogId,
+          is_vendedor_view: soloVendedor,
+          vendedor_detectado_por: vendedorDetectadoPor,
+          vendedor_clientes_asignados: clientesAsignadosAutenticado,
           supervisor_equipos_pendiente: isErpRolSupervisor(auth.rol),
           alerta_neto_sin_nc: alertaNetoSinNc ?? null,
           documentacion_base: {
