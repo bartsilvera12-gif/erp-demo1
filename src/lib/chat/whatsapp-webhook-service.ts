@@ -62,6 +62,18 @@ import {
   assertAllowedChatDataSchema,
   isLikelyUnexposedTenantChatSchema,
 } from "@/lib/supabase/chat-data-schema";
+import {
+  collectMetaWebhookStatusValues,
+  compactMetaStatusPayload,
+  firstMetaStatusError,
+  metaStatusTimestampToIso,
+  normalizeMetaWhatsappStatus,
+  recordFromUnknown,
+  shouldApplyWhatsappStatus,
+  type MetaWebhookStatusValue,
+  type MetaWhatsappStatus,
+  type MetaWhatsappStatusName,
+} from "@/lib/chat/meta-whatsapp-status";
 
 export { normalizeWaPhone } from "@/lib/chat/wa-phone";
 
@@ -70,6 +82,7 @@ const WH_CONTACT = "[webhooks/whatsapp][upsert_contact]";
 const WH_CONV = "[webhooks/whatsapp][upsert_conversation]";
 const WH_MSG = "[webhooks/whatsapp][insert_message]";
 const WH_FLOW = "[webhooks/whatsapp][flow_session]";
+const WH_STATUS = "[whatsapp-status]";
 
 function contactNameForWa(
   contacts: MetaWebhookValue["contacts"],
@@ -264,6 +277,15 @@ type WhatsappChannelRow = {
   empresa_id: string;
   meta_phone_number_id: string;
   activo: boolean | null;
+};
+
+type StatusChannelContext = {
+  channel: WhatsappChannelRow;
+  empresaId: string;
+  dataSchema: string;
+  useTenantPg: boolean;
+  pool: Pool | null;
+  supabase: SupabaseAdmin;
 };
 
 /**
@@ -1738,6 +1760,328 @@ export function collectMetaWebhookMessageValues(body: unknown): MetaWebhookValue
   return out;
 }
 
+async function resolveStatusChannelContext(
+  catalogSupabase: SupabaseAdmin,
+  phoneNumberId: string
+): Promise<{ ok: true; ctx: StatusChannelContext } | { ok: false; error: string }> {
+  const pool = getChatPostgresPool();
+  let channel: WhatsappChannelRow | null = null;
+  let dataSchema: string = SUPABASE_APP_SCHEMA;
+  let dataSupabase: SupabaseAdmin = catalogSupabase;
+
+  const routeRow = await fetchOmnichannelRouteByMetaPhone(catalogSupabase, phoneNumberId);
+  if (routeRow) {
+    dataSchema = resolveEmpresaDataSchema(routeRow.data_schema || null);
+    console.info(`${WH_STATUS}[channel-resolved]`, {
+      phone_number_id: phoneNumberId,
+      schema: dataSchema,
+      empresa_id: routeRow.empresa_id,
+      channel_id: routeRow.channel_id,
+      source: "omnichannel_route",
+    });
+
+    if (pool && isLikelyUnexposedTenantChatSchema(dataSchema) && dataSchema !== SUPABASE_APP_SCHEMA) {
+      channel = await pgLoadWhatsappChannelById(pool, dataSchema, routeRow.channel_id, routeRow.empresa_id);
+      dataSupabase = catalogSupabase;
+    } else {
+      dataSupabase =
+        dataSchema === SUPABASE_APP_SCHEMA
+          ? catalogSupabase
+          : (createServiceRoleClientWithDbSchema(dataSchema) as SupabaseAdmin);
+      const { data, error } = await dataSupabase
+        .from("chat_channels")
+        .select("id, empresa_id, meta_phone_number_id, activo")
+        .eq("id", routeRow.channel_id)
+        .maybeSingle();
+      if (error) return { ok: false, error: error.message };
+      channel = data as WhatsappChannelRow | null;
+    }
+  } else {
+    const { data, error } = await catalogSupabase
+      .from("chat_channels")
+      .select("id, empresa_id, meta_phone_number_id, activo")
+      .eq("meta_phone_number_id", phoneNumberId)
+      .maybeSingle();
+    if (error) return { ok: false, error: error.message };
+    channel = data as WhatsappChannelRow | null;
+
+    if (!channel) {
+      const tenantHit = await findWhatsappChannelInTenantSchemas(catalogSupabase, phoneNumberId);
+      if (tenantHit) {
+        channel = tenantHit.channel;
+        dataSchema = tenantHit.dataSchema;
+        dataSupabase = tenantHit.dataSupabase;
+      }
+    }
+  }
+
+  if (!channel) {
+    return { ok: false, error: `Canal no registrado para phone_number_id=${phoneNumberId}` };
+  }
+  if (channel.activo === false) {
+    return { ok: false, error: "El canal WhatsApp está desactivado" };
+  }
+
+  const empresaId = channel.empresa_id;
+  dataSchema = dataSchema === SUPABASE_APP_SCHEMA ? await fetchDataSchemaForEmpresaId(empresaId) : dataSchema;
+  const useTenantPg = Boolean(pool && isLikelyUnexposedTenantChatSchema(dataSchema));
+  const supabase: SupabaseAdmin =
+    useTenantPg && pool
+      ? createTenantPgChatSupabaseShim({
+          pool,
+          schema: dataSchema,
+          storageDelegate: catalogSupabase,
+          rpcDelegate: catalogSupabase as AppSupabaseClient,
+        })
+      : dataSchema === SUPABASE_APP_SCHEMA
+        ? catalogSupabase
+        : (createServiceRoleClientWithDbSchema(dataSchema) as SupabaseAdmin);
+
+  console.info(`${WH_STATUS}[channel-resolved]`, {
+    phone_number_id: phoneNumberId,
+    schema: dataSchema,
+    empresa_id: empresaId,
+    channel_id: channel.id,
+    provider: "meta",
+    storage: useTenantPg ? "postgres_directo" : "postgrest",
+  });
+
+  return {
+    ok: true,
+    ctx: {
+      channel,
+      empresaId,
+      dataSchema,
+      useTenantPg,
+      pool: pool ?? null,
+      supabase,
+    },
+  };
+}
+
+async function loadTableColumns(pool: Pool, schema: string, table: string): Promise<Set<string>> {
+  const r = await pool.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = $1 AND table_name = $2`,
+    [schema, table]
+  );
+  return new Set(r.rows.map((row: { column_name: string }) => row.column_name));
+}
+
+async function applyWhatsappStatusPg(
+  ctx: StatusChannelContext,
+  status: MetaWhatsappStatus,
+  nextStatus: MetaWhatsappStatusName
+): Promise<"updated" | "skipped" | "not_found"> {
+  if (!ctx.pool) return "not_found";
+  const schema = assertAllowedChatDataSchema(ctx.dataSchema);
+  const msgT = quoteSchemaTable(schema, "chat_messages");
+  const convT = quoteSchemaTable(schema, "chat_conversations");
+  const cols = await loadTableColumns(ctx.pool, schema, "chat_messages");
+  const id = status.id?.trim() ?? "";
+  const idClauses = ["m.wa_message_id = $3"];
+  if (cols.has("provider_message_id")) idClauses.push("m.provider_message_id = $3");
+
+  const found = await ctx.pool.query(
+    `SELECT m.id::text, m.whatsapp_delivery_status, m.raw_payload
+     FROM ${msgT} m
+     JOIN ${convT} c ON c.id = m.conversation_id
+     WHERE m.empresa_id = $1::uuid
+       AND c.channel_id = $2::uuid
+       AND (${idClauses.join(" OR ")})
+     LIMIT 1`,
+    [ctx.empresaId, ctx.channel.id, id]
+  );
+  const row = found.rows[0] as
+    | { id: string; whatsapp_delivery_status: string | null; raw_payload: unknown }
+    | undefined;
+  if (!row) return "not_found";
+  if (!shouldApplyWhatsappStatus(row.whatsapp_delivery_status, nextStatus)) return "skipped";
+
+  const receivedAt = new Date().toISOString();
+  const timestampIso = metaStatusTimestampToIso(status.timestamp);
+  const rawPayload = {
+    ...recordFromUnknown(row.raw_payload),
+    neura_meta_status: compactMetaStatusPayload(status, receivedAt),
+  };
+  const error = firstMetaStatusError(status);
+
+  const sets: string[] = [];
+  const params: unknown[] = [row.id];
+  const addSet = (col: string, value: unknown, cast = "") => {
+    if (!cols.has(col)) return;
+    params.push(value);
+    sets.push(`${col} = $${params.length}${cast}`);
+  };
+
+  addSet("whatsapp_delivery_status", nextStatus);
+  if (nextStatus === "sent") addSet("whatsapp_sent_at", timestampIso);
+  if (nextStatus === "delivered") addSet("whatsapp_delivered_at", timestampIso);
+  if (nextStatus === "read") addSet("whatsapp_read_at", timestampIso);
+  if (nextStatus === "failed") {
+    addSet("whatsapp_failed_at", timestampIso);
+    addSet("error_code", error.code);
+    addSet("error_message", error.message);
+  }
+  addSet("raw_payload", JSON.stringify(rawPayload), "::jsonb");
+
+  if (sets.length === 0) return "skipped";
+  await ctx.pool.query(`UPDATE ${msgT} SET ${sets.join(", ")} WHERE id = $1::uuid`, params);
+
+  console.info(`${WH_STATUS}[message-updated]`, {
+    schema: ctx.dataSchema,
+    empresa_id: ctx.empresaId,
+    channel_id: ctx.channel.id,
+    message_id: row.id,
+    wamid: id,
+    status: nextStatus,
+    recipient_id: status.recipient_id ?? null,
+    error_code: error.code,
+  });
+  return "updated";
+}
+
+async function applyWhatsappStatusPostgrest(
+  ctx: StatusChannelContext,
+  status: MetaWhatsappStatus,
+  nextStatus: MetaWhatsappStatusName
+): Promise<"updated" | "skipped" | "not_found"> {
+  const id = status.id?.trim() ?? "";
+  const { data, error } = await ctx.supabase
+    .from("chat_messages")
+    .select("id, whatsapp_delivery_status, raw_payload")
+    .eq("empresa_id", ctx.empresaId)
+    .eq("wa_message_id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const row = data as
+    | { id: string; whatsapp_delivery_status?: string | null; raw_payload?: unknown }
+    | null;
+  if (!row) return "not_found";
+  if (!shouldApplyWhatsappStatus(row.whatsapp_delivery_status, nextStatus)) return "skipped";
+
+  const receivedAt = new Date().toISOString();
+  const timestampIso = metaStatusTimestampToIso(status.timestamp);
+  const patch: Record<string, unknown> = {
+    whatsapp_delivery_status: nextStatus,
+    raw_payload: {
+      ...recordFromUnknown(row.raw_payload),
+      neura_meta_status: compactMetaStatusPayload(status, receivedAt),
+    },
+  };
+  if (nextStatus === "delivered") patch.whatsapp_delivered_at = timestampIso;
+  if (nextStatus === "read") patch.whatsapp_read_at = timestampIso;
+
+  const { error: updErr } = await ctx.supabase.from("chat_messages").update(patch).eq("id", row.id);
+  if (updErr) throw new Error(updErr.message);
+
+  const statusError = firstMetaStatusError(status);
+  console.info(`${WH_STATUS}[message-updated]`, {
+    schema: ctx.dataSchema,
+    empresa_id: ctx.empresaId,
+    channel_id: ctx.channel.id,
+    message_id: row.id,
+    wamid: id,
+    status: nextStatus,
+    recipient_id: status.recipient_id ?? null,
+    error_code: statusError.code,
+  });
+  return "updated";
+}
+
+async function processWhatsappStatusValue(
+  catalogSupabase: SupabaseAdmin,
+  value: MetaWebhookStatusValue
+): Promise<ProcessWebhookResult> {
+  const errors: string[] = [];
+  let processed = 0;
+  let skipped = 0;
+  const phoneNumberId = value.metadata?.phone_number_id?.trim();
+  if (!phoneNumberId) {
+    return { ok: false, processed: 0, skipped: 0, errors: ["Falta metadata.phone_number_id en status"] };
+  }
+
+  const resolved = await resolveStatusChannelContext(catalogSupabase, phoneNumberId);
+  if (!resolved.ok) {
+    console.warn(`${WH_STATUS}[failed]`, { phone_number_id: phoneNumberId, error: resolved.error });
+    return { ok: false, processed: 0, skipped: 0, errors: [resolved.error] };
+  }
+
+  for (const status of value.statuses ?? []) {
+    const wamid = status.id?.trim() ?? "";
+    const nextStatus = normalizeMetaWhatsappStatus(status.status);
+    console.info(`${WH_STATUS}[received]`, {
+      phone_number_id: phoneNumberId,
+      schema: resolved.ctx.dataSchema,
+      empresa_id: resolved.ctx.empresaId,
+      channel_id: resolved.ctx.channel.id,
+      wamid: wamid || null,
+      status: status.status ?? null,
+      recipient_id: status.recipient_id ?? null,
+      error_code: firstMetaStatusError(status).code,
+    });
+
+    if (!wamid || !nextStatus) {
+      skipped += 1;
+      errors.push("Status sin id o estado soportado");
+      continue;
+    }
+
+    try {
+      const outcome =
+        resolved.ctx.useTenantPg && resolved.ctx.pool
+          ? await applyWhatsappStatusPg(resolved.ctx, status, nextStatus)
+          : await applyWhatsappStatusPostgrest(resolved.ctx, status, nextStatus);
+      if (outcome === "updated") processed += 1;
+      else {
+        skipped += 1;
+        if (outcome === "not_found") {
+          console.info(`${WH_STATUS}[message-not-found]`, {
+            phone_number_id: phoneNumberId,
+            schema: resolved.ctx.dataSchema,
+            empresa_id: resolved.ctx.empresaId,
+            channel_id: resolved.ctx.channel.id,
+            wamid,
+            status: nextStatus,
+            recipient_id: status.recipient_id ?? null,
+          });
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(message);
+      console.warn(`${WH_STATUS}[failed]`, {
+        phone_number_id: phoneNumberId,
+        schema: resolved.ctx.dataSchema,
+        empresa_id: resolved.ctx.empresaId,
+        channel_id: resolved.ctx.channel.id,
+        wamid,
+        status: nextStatus,
+        error: message,
+      });
+    }
+  }
+
+  return { ok: errors.length === 0, processed, skipped, errors };
+}
+
+export async function processWhatsAppWebhookStatuses(
+  catalogSupabase: SupabaseAdmin,
+  body: unknown
+): Promise<ProcessWebhookResult> {
+  const values = collectMetaWebhookStatusValues(body);
+  const aggregated: ProcessWebhookResult = { ok: true, processed: 0, skipped: 0, errors: [] };
+  for (const value of values) {
+    const result = await processWhatsappStatusValue(catalogSupabase, value);
+    aggregated.processed += result.processed;
+    aggregated.skipped += result.skipped;
+    aggregated.errors.push(...result.errors);
+    if (!result.ok) aggregated.ok = false;
+  }
+  return aggregated;
+}
+
 /**
  * Recorre el body completo del webhook Meta (o el `value` reenviado en la raíz).
  */
@@ -1758,6 +2102,12 @@ export async function processWhatsAppWebhookBody(
     aggregated.errors.push("Body inválido");
     return aggregated;
   }
+
+  const statusResult = await processWhatsAppWebhookStatuses(supabase, body);
+  aggregated.processed += statusResult.processed;
+  aggregated.skipped += statusResult.skipped;
+  aggregated.errors.push(...statusResult.errors);
+  if (!statusResult.ok) aggregated.ok = false;
 
   const values = collectMetaWebhookMessageValues(body);
 
