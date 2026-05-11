@@ -102,6 +102,29 @@ function documentoCliente(c: Cliente): string {
   return c.ruc?.trim() || c.documento?.trim() || "—";
 }
 
+function VendedorResponsableCell({ cliente }: { cliente: Cliente }) {
+  const nombre = cliente.vendedor_usuario_nombre?.trim();
+  const email = cliente.vendedor_usuario_email?.trim();
+  const legacy = cliente.vendedor_asignado?.trim();
+
+  if (cliente.vendedor_usuario_id) {
+    return nombre || email || "Usuario ERP asignado";
+  }
+
+  if (legacy) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span>{legacy}</span>
+        <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+          Texto libre
+        </span>
+      </span>
+    );
+  }
+
+  return <span className="text-slate-400">Sin asignar</span>;
+}
+
 function buildClienteColumns(mapNombreTipo: Record<string, string>): ClienteColumnDef[] {
   const th = "text-left text-xs font-semibold text-slate-600 px-5 py-3 whitespace-nowrap";
   const td = "px-5 py-3.5";
@@ -242,12 +265,7 @@ function buildClienteColumns(mapNombreTipo: Record<string, string>): ClienteColu
       visibleDefault: false,
       headerClassName: th,
       className: `${td} text-xs text-gray-500 whitespace-nowrap`,
-      render: (c) => {
-        const legacy = c.vendedor_asignado?.trim();
-        if (legacy) return legacy;
-        if (c.vendedor_usuario_id) return "Usuario ERP asignado";
-        return "—";
-      },
+      render: (c) => <VendedorResponsableCell cliente={c} />,
     },
   ];
 }

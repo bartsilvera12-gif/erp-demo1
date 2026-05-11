@@ -52,6 +52,9 @@ export interface Cliente {
   vendedor_asignado?:  string;
   /** Usuario ERP responsable comercial (FK zentra_erp.usuarios); el texto libre sigue en vendedor_asignado. */
   vendedor_usuario_id?: string | null;
+  /** Display enriquecido desde `zentra_erp.usuarios` para listados; no reemplaza la FK. */
+  vendedor_usuario_nombre?: string | null;
+  vendedor_usuario_email?:  string | null;
 
   origen:              OrigenCliente;
   prospecto_id?:       number;          // ID del prospecto CRM de origen

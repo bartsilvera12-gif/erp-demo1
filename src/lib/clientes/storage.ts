@@ -40,6 +40,8 @@ interface SupabaseRow {
   moneda_preferida:   string | null;
   vendedor_asignado:  string | null;
   vendedor_usuario_id?: string | null;
+  vendedor_usuario_nombre?: string | null;
+  vendedor_usuario_email?: string | null;
   origen:             string | null;
   prospecto_id:       number | null;
   estado:             string | null;
@@ -90,6 +92,8 @@ function rowToCliente(row: SupabaseRow): Cliente {
     moneda_preferida:    (row.moneda_preferida === "USD" ? "USD" : "GS") as "GS" | "USD",
     vendedor_asignado:   row.vendedor_asignado ?? undefined,
     vendedor_usuario_id: row.vendedor_usuario_id ?? undefined,
+    vendedor_usuario_nombre: row.vendedor_usuario_nombre ?? undefined,
+    vendedor_usuario_email:  row.vendedor_usuario_email ?? undefined,
     origen:              (row.origen as Cliente["origen"]) ?? "MANUAL",
     prospecto_id:        row.prospecto_id ?? undefined,
     estado:              (row.estado === "inactivo" ? "inactivo" : "activo") as EstadoCliente,

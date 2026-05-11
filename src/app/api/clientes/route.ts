@@ -3,6 +3,7 @@ import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
 import { emitEvent, EVENT_TYPES } from "@/lib/integrations/events";
 import type { AppSupabaseClient } from "@/lib/supabase/schema";
+import { createServiceRoleClient } from "@/lib/supabase/service-admin";
 import { getTenantSupabaseFromAuthWithRol } from "@/lib/supabase/tenant-api";
 import { fetchPerfilTributarioActivosMap } from "@/lib/clientes/tributario-server";
 import { ensureSemillasCatalogoTipos, tipoServicioSlugValido } from "@/lib/clientes/tipo-servicio-catalogo";
@@ -53,6 +54,61 @@ async function buildPlanActivoMap(
   return map;
 }
 
+type VendedorUsuarioRow = {
+  id: string;
+  nombre: string | null;
+  email: string | null;
+};
+
+function vendedorUsuarioIds(rows: Record<string, unknown>[]): string[] {
+  return Array.from(
+    new Set(
+      rows
+        .map((r) => (typeof r.vendedor_usuario_id === "string" ? r.vendedor_usuario_id.trim() : ""))
+        .filter(Boolean)
+    )
+  );
+}
+
+async function buildVendedoresResponsablesMap(
+  empresaId: string,
+  usuarioIds: string[]
+): Promise<Map<string, { nombre: string | null; email: string | null }>> {
+  const map = new Map<string, { nombre: string | null; email: string | null }>();
+  if (usuarioIds.length === 0) return map;
+
+  const catalog = createServiceRoleClient();
+  const { data, error } = await catalog
+    .from("usuarios")
+    .select("id, nombre, email")
+    .eq("empresa_id", empresaId)
+    .in("id", usuarioIds);
+
+  if (error) {
+    console.error("[api/clientes] vendedores responsables:", error.message);
+    return map;
+  }
+
+  for (const u of (data ?? []) as VendedorUsuarioRow[]) {
+    map.set(u.id, { nombre: u.nombre, email: u.email });
+  }
+  return map;
+}
+
+function attachVendedoresResponsables(
+  rows: Record<string, unknown>[],
+  map: Map<string, { nombre: string | null; email: string | null }>
+): void {
+  for (const r of rows) {
+    const uid = typeof r.vendedor_usuario_id === "string" ? r.vendedor_usuario_id.trim() : "";
+    if (!uid) continue;
+    const vendedor = map.get(uid);
+    if (!vendedor) continue;
+    r.vendedor_usuario_nombre = vendedor.nombre;
+    r.vendedor_usuario_email = vendedor.email;
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const ctx = await getTenantSupabaseFromAuthWithRol(request);
@@ -93,6 +149,12 @@ export async function GET(request: NextRequest) {
         const id = typeof r.id === "string" ? r.id : "";
         r.perfil_tributario_activo = id ? perfilMap.get(id) === true : false;
       }
+    }
+
+    if (rows.length > 0) {
+      const vendedorIds = vendedorUsuarioIds(rows);
+      const vendedoresMap = await buildVendedoresResponsablesMap(auth.empresa_id, vendedorIds);
+      attachVendedoresResponsables(rows, vendedoresMap);
     }
 
     return NextResponse.json(successResponse(rows));
