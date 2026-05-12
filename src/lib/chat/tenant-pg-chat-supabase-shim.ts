@@ -49,6 +49,10 @@ const ALLOWED_TABLES = new Set([
   "proyecto_comentarios",
   "proyecto_archivos",
   "proyecto_estado_historial",
+  "marketing_calendarios",
+  "marketing_piezas",
+  "marketing_comentarios",
+  "marketing_historial_estados",
 ]);
 
 function pgErr(message: string, code?: string): { message: string; code?: string } {
