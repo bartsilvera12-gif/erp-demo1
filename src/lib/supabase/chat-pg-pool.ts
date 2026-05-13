@@ -3,6 +3,27 @@ import { assertAllowedChatDataSchema } from "@/lib/supabase/chat-data-schema";
 
 /** Una sola instancia por runtime Node (Vercel isolate); sobrevive hot-reload vía globalThis. */
 const GLOBAL_KEY = "__neura_CHAT_PG_POOL_SINGLETON__" as const;
+const DATE_PARSER_FLAG_KEY = "__neura_CHAT_PG_DATE_PARSER_RAW__" as const;
+
+/**
+ * `node-pg` por defecto parsea OID 1082 (`date`) a `Date` JS, lo que rompe los validadores
+ * de la app que esperan strings `YYYY-MM-DD` (por ejemplo `timbrado_fecha_inicio_vigencia`
+ * en `empresa_sifen_config`: `String(new Date("2026-04-01"))` → `"Wed Apr 01 …"`,
+ * que falla el regex y dispara
+ * `Configuración SIFEN: timbrado_fecha_inicio_vigencia debe ser YYYY-MM-DD`).
+ *
+ * Forzamos el parser a "identidad" (devolver el texto crudo `YYYY-MM-DD` tal como viene
+ * del wire de Postgres). Solo afecta a queries que pasan por este pool node-pg
+ * (chat shim / sifen / facturas / clientes con `data_schema = erp_*`).
+ * PostgREST/Supabase JS no se ven afectados (allá `date` ya viene como string).
+ * No tocamos `timestamp`/`timestamptz` (OID 1114 / 1184): siguen mapeando a `Date`.
+ */
+function ensurePgDateParserRaw(): void {
+  const g = globalThis as unknown as Record<string, boolean | undefined>;
+  if (g[DATE_PARSER_FLAG_KEY]) return;
+  pg.types.setTypeParser(pg.types.builtins.DATE, (v) => v);
+  g[DATE_PARSER_FLAG_KEY] = true;
+}
 
 function readGlobalPool(): pg.Pool | undefined {
   const g = globalThis as unknown as Record<string, pg.Pool | undefined>;
@@ -71,6 +92,9 @@ export function getChatPostgresConnectionString(): string | null {
 export function getChatPostgresPool(): pg.Pool | null {
   const url = getChatPostgresConnectionString();
   if (!url) return null;
+
+  /** Asegura que `date` se devuelva como string `YYYY-MM-DD` antes de crear el pool. */
+  ensurePgDateParserRaw();
 
   let pool = readGlobalPool();
   if (!pool) {
