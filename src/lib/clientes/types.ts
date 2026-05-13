@@ -82,6 +82,13 @@ export interface Cliente {
   baja_operativa_motivo?:     string | null;
   baja_operativa_anulo_factura?: boolean | null;
 
+  /** SIFEN factura electrónica: receptor extranjero (no dRucRec/dDVRec paraguayos en el DE). */
+  sifen_receptor_extranjero?: boolean;
+  /** ISO 3166-1 alpha-3 (ej. PER); opcional si `pais` ya permite inferir el código. */
+  sifen_codigo_pais?: string | null;
+  /** tiTipDocRec SET (1–6 | 9); con extranjero, null → 9 en facturación. */
+  sifen_tipo_doc_receptor?: number | null;
+
   created_at:          string;          // ISO string
   updated_at:          string;          // ISO string
 

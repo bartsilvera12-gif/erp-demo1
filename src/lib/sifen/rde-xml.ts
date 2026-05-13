@@ -23,6 +23,10 @@ import {
   padDigits,
   splitRucParaXml,
 } from "./sifen-cdc";
+import {
+  descripcionTipoDocRecepXml,
+  nombrePaisParaDescripcionSifen,
+} from "./sifen-receptor-pais";
 
 const NS = SIFEN_EKUATIA_TARGET_NS;
 const XMLNS_XSI = "http://www.w3.org/2001/XMLSchema-instance";
@@ -421,7 +425,33 @@ export function buildOfficialRdeFacturaElectronicaXml(
   gEmisParts.push("</gEmis>");
 
   const recParts: string[] = ["<gDatRec>"];
-  if (receptor.ruc?.trim()) {
+  if (receptor.receptor_extranjero === true) {
+    const cPais = (receptor.codigo_pais_iso3 ?? "").trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(cPais)) {
+      throw new Error("Receptor extranjero SIFEN: codigo_pais_iso3 inválido o ausente en el payload.");
+    }
+    const dDesPais = nombrePaisParaDescripcionSifen(cPais);
+    const tipo = receptor.tipo_doc_receptor ?? 9;
+    const dDesTipo = descripcionTipoDocRecepXml(tipo, receptor.descripcion_tipo_doc_receptor);
+    const num = (receptor.num_id_receptor ?? "").replace(/\s/g, "").trim().slice(0, 20);
+    if (!num) {
+      throw new Error("Receptor extranjero SIFEN: falta num_id_receptor en el payload.");
+    }
+    recParts.push(textEl("iNatRec", "2"));
+    recParts.push(textEl("iTiOpe", "1"));
+    recParts.push(textEl("cPaisRec", cPais));
+    recParts.push(textEl("dDesPaisRe", dDesPais));
+    recParts.push(textEl("iTipIDRec", String(tipo)));
+    recParts.push(textEl("dDTipIDRec", dDesTipo));
+    recParts.push(textEl("dNumIDRec", num));
+    recParts.push(textEl("dNomRec", receptor.nombre.trim()));
+    if (receptor.direccion?.trim()) recParts.push(textEl("dDirRec", receptor.direccion.trim()));
+    if (receptor.telefono?.trim()) {
+      const tr = receptor.telefono.replace(/\D/g, "");
+      if (tr.length >= 8) recParts.push(textEl("dTelRec", tr.slice(0, 15)));
+    }
+    if (receptor.email?.trim()) recParts.push(textEl("dEmailRec", receptor.email.trim()));
+  } else if (receptor.ruc?.trim()) {
     const { cuerpo: dRucRec, dDV: dDVRec } = splitRucParaXml(receptor.ruc.trim());
     const iTiContRec = iTipContCodigo(receptor.nombre);
     recParts.push(textEl("iNatRec", "1"));

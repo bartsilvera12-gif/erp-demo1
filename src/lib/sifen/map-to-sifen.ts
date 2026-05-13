@@ -54,6 +54,11 @@ export function mapPayloadBaseToSifenDocumento(base: SifenFacturaPayloadBase): S
     direccion: receptor.direccion,
     telefono: receptor.telefono,
     email: receptor.email,
+    receptor_extranjero: receptor.receptor_extranjero,
+    codigo_pais_iso3: receptor.codigo_pais_iso3,
+    tipo_doc_receptor: receptor.tipo_doc_receptor,
+    descripcion_tipo_doc_receptor: receptor.descripcion_tipo_doc_receptor,
+    num_id_receptor: receptor.num_id_receptor,
   };
 
   const lineas: SifenDocumentoItemLinea[] = items.map((it, idx) => ({

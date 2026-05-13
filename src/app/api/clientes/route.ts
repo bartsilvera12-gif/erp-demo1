@@ -200,6 +200,9 @@ export async function POST(request: NextRequest) {
       direccion,
       ciudad,
       pais,
+      sifen_receptor_extranjero,
+      sifen_codigo_pais,
+      sifen_tipo_doc_receptor,
       condicion_pago,
       moneda_preferida,
       estado,
@@ -261,6 +264,17 @@ export async function POST(request: NextRequest) {
       vendedor_asignado:    typeof vendedor_asignado === "string" && vendedor_asignado.trim() ? vendedor_asignado.trim() : null,
       vendedor_usuario_id:  vendedorUsuarioId,
     };
+
+    if (typeof sifen_receptor_extranjero === "boolean") {
+      (insertBase as Record<string, unknown>).sifen_receptor_extranjero = sifen_receptor_extranjero;
+    }
+    if (sifen_codigo_pais != null && String(sifen_codigo_pais).trim() !== "") {
+      (insertBase as Record<string, unknown>).sifen_codigo_pais = String(sifen_codigo_pais).trim().toUpperCase();
+    }
+    if (sifen_tipo_doc_receptor != null && sifen_tipo_doc_receptor !== "") {
+      const n = Number(sifen_tipo_doc_receptor);
+      if (Number.isFinite(n)) (insertBase as Record<string, unknown>).sifen_tipo_doc_receptor = n;
+    }
 
     const rowWithPlan =
       planComercial ? { ...insertBase, plan_comercial_id: planComercial } : insertBase;

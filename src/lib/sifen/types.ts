@@ -232,6 +232,19 @@ export interface SifenPayloadReceptor {
   direccion: string | null;
   telefono: string | null;
   email: string | null;
+  /**
+   * Si true, el DE usa receptor no contribuyente extranjero: sin dRucRec/dDVRec;
+   * cPaisRec + iTipIDRec + dDTipIDRec + dNumIDRec.
+   */
+  receptor_extranjero?: boolean;
+  /** ISO 3166-1 alpha-3 (ej. PER). Obligatorio cuando receptor_extranjero es true. */
+  codigo_pais_iso3?: string | null;
+  /** tiTipDocRec SET (1–6 | 9). Con extranjero, null se interpreta como 9. */
+  tipo_doc_receptor?: number | null;
+  /** Texto libre 9–41 solo si tipo 9 y se desea personalizar dDTipIDRec. */
+  descripcion_tipo_doc_receptor?: string | null;
+  /** Valor sanitizado para dNumIDRec (máx. 20). Con extranjero se arma en build-payload. */
+  num_id_receptor?: string | null;
 }
 
 export interface SifenPayloadItem {
@@ -315,6 +328,11 @@ export interface SifenDocumentoReceptor {
   direccion: string | null;
   telefono: string | null;
   email: string | null;
+  receptor_extranjero?: boolean;
+  codigo_pais_iso3?: string | null;
+  tipo_doc_receptor?: number | null;
+  descripcion_tipo_doc_receptor?: string | null;
+  num_id_receptor?: string | null;
 }
 
 /** Totales agregados para el DE (derivados de líneas + cabecera ERP). */

@@ -8,6 +8,11 @@ import type {
   SifenPayloadReceptor,
 } from "./types";
 import { normalizeActividadEconomica, normalizeTimbradoFechaInicioVigencia } from "./config-validation";
+import { splitRucParaXml } from "./sifen-cdc";
+import {
+  normalizarTipoDocReceptorSifen,
+  resolveCodigoPaisIso3Receptor,
+} from "./sifen-receptor-pais";
 
 function trimStr(v: unknown): string {
   if (v == null) return "";
@@ -54,6 +59,10 @@ export interface SifenBuildClienteRow {
   direccion: string | null;
   telefono: string | null;
   email: string | null;
+  pais?: string | null;
+  sifen_receptor_extranjero?: boolean | null;
+  sifen_codigo_pais?: string | null;
+  sifen_tipo_doc_receptor?: number | string | null;
 }
 
 export interface SifenBuildConfigRow {
@@ -167,6 +176,16 @@ function validateEmisor(config: SifenBuildConfigRow | null): { ok: true; emisor:
   };
 }
 
+function parseBoolCliente(v: unknown): boolean {
+  if (v === true) return true;
+  if (v === false || v == null) return false;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    return s === "true" || s === "1" || s === "t" || s === "yes" || s === "si" || s === "sí";
+  }
+  return Boolean(v);
+}
+
 function validateReceptor(
   factura: SifenBuildFacturaRow,
   cliente: SifenBuildClienteRow | null
@@ -188,15 +207,11 @@ function validateReceptor(
         "Falta el nombre del receptor: complete en el cliente al menos uno de: empresa, nombre_contacto o nombre.",
     };
   }
+  const extranjero = parseBoolCliente(cliente.sifen_receptor_extranjero);
   const ruc = trimStr(cliente.ruc) || null;
   const documento = trimStr(cliente.documento) || null;
-  if (!ruc && !documento) {
-    return {
-      ok: false,
-      error:
-        "Falta identificación del receptor: complete en el cliente al menos ruc o documento.",
-    };
-  }
+  const paisTxt = trimStr(cliente.pais) || null;
+
   const dirRaw = trimStr(cliente.direccion);
   let direccion: string | null = dirRaw || null;
   if (direccion) {
@@ -212,6 +227,94 @@ function validateReceptor(
     }
   }
 
+  if (extranjero) {
+    const codigoPais = resolveCodigoPaisIso3Receptor({
+      sifenCodigoPais: cliente.sifen_codigo_pais,
+      paisTexto: paisTxt,
+    });
+    if (!codigoPais) {
+      return {
+        ok: false,
+        error:
+          "Receptor extranjero SIFEN: indique `sifen_codigo_pais` (ISO3, ej. PER) o un país reconocible en el campo país del cliente.",
+      };
+    }
+    if (codigoPais === "PRY") {
+      return {
+        ok: false,
+        error:
+          "Receptor extranjero SIFEN: el código país no puede ser PRY. Desactive receptor extranjero si el cliente es contribuyente paraguayo.",
+      };
+    }
+    const numFuente = documento || ruc;
+    if (!numFuente) {
+      return {
+        ok: false,
+        error:
+          "Receptor extranjero SIFEN: complete `documento` o `ruc` con el número de identificación tributaria del exterior.",
+      };
+    }
+    const num_id_receptor = numFuente.replace(/\s/g, "").slice(0, 20);
+    if (!num_id_receptor) {
+      return {
+        ok: false,
+        error: "Receptor extranjero SIFEN: el número de identificación quedó vacío tras normalizar.",
+      };
+    }
+    const tipoDb = normalizarTipoDocReceptorSifen(cliente.sifen_tipo_doc_receptor);
+    const tipo_doc_receptor = tipoDb ?? 9;
+
+    const receptor: SifenPayloadReceptor = {
+      cliente_id: cliente.id,
+      nombre,
+      documento,
+      ruc,
+      direccion,
+      telefono: trimStr(cliente.telefono) || null,
+      email: trimStr(cliente.email) || null,
+      receptor_extranjero: true,
+      codigo_pais_iso3: codigoPais,
+      tipo_doc_receptor,
+      descripcion_tipo_doc_receptor: null,
+      num_id_receptor,
+    };
+    return { ok: true, receptor };
+  }
+
+  if (!ruc && !documento) {
+    return {
+      ok: false,
+      error:
+        "Falta identificación del receptor: complete en el cliente al menos ruc o documento.",
+    };
+  }
+
+  if (ruc) {
+    const digitos = ruc.replace(/\D/g, "");
+    const nP = normKey(paisTxt || "");
+    const textoPareceParaguay =
+      !nP || nP.includes("PARAGUAY") || nP === "PY" || nP === "PRY";
+    if (textoPareceParaguay && digitos.length >= 10) {
+      return {
+        ok: false,
+        error:
+          "Identificación con demasiados dígitos para tratarse como RUC paraguayo con país Paraguay. Si es un documento del exterior (p. ej. RUC de 11 dígitos), active «receptor extranjero SIFEN», asigne país/código ISO3 (ej. PER) y vuelva a intentar.",
+      };
+    }
+  }
+
+  if (ruc) {
+    try {
+      splitRucParaXml(ruc);
+    } catch {
+      return {
+        ok: false,
+        error:
+          "El RUC del cliente no es válido como RUC paraguayo SIFEN (longitud o formato). Si es identificación del exterior, active «receptor extranjero SIFEN», indique código país ISO3 (ej. PER) y use documento o RUC con ese número.",
+      };
+    }
+  }
+
   const receptor: SifenPayloadReceptor = {
     cliente_id: cliente.id,
     nombre,
@@ -220,6 +323,7 @@ function validateReceptor(
     direccion,
     telefono: trimStr(cliente.telefono) || null,
     email: trimStr(cliente.email) || null,
+    receptor_extranjero: false,
   };
   return { ok: true, receptor };
 }

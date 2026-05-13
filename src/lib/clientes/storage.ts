@@ -32,6 +32,9 @@ interface SupabaseRow {
   direccion:          string | null;
   ciudad:             string | null;
   pais:               string | null;
+  sifen_receptor_extranjero?: boolean | null;
+  sifen_codigo_pais?: string | null;
+  sifen_tipo_doc_receptor?: number | string | null;
   sitio_web:          string | null;
   instagram:          string | null;
   linkedin:           string | null;
@@ -112,6 +115,15 @@ function rowToCliente(row: SupabaseRow): Cliente {
     created_at:          row.created_at ?? now,
     updated_at:          row.updated_at ?? row.created_at ?? now,
   };
+  if (row.sifen_receptor_extranjero === true) c.sifen_receptor_extranjero = true;
+  if (row.sifen_receptor_extranjero === false) c.sifen_receptor_extranjero = false;
+  if (row.sifen_codigo_pais != null && String(row.sifen_codigo_pais).trim() !== "") {
+    c.sifen_codigo_pais = String(row.sifen_codigo_pais).trim();
+  }
+  if (row.sifen_tipo_doc_receptor != null && row.sifen_tipo_doc_receptor !== "") {
+    const n = typeof row.sifen_tipo_doc_receptor === "number" ? row.sifen_tipo_doc_receptor : parseInt(String(row.sifen_tipo_doc_receptor), 10);
+    if (Number.isFinite(n)) c.sifen_tipo_doc_receptor = n;
+  }
   if (row.perfil_tributario_activo === true) c.perfil_tributario_activo = true;
   if (row.perfil_tributario != null) c.perfil_tributario = row.perfil_tributario;
   return c;
@@ -249,6 +261,15 @@ export async function saveCliente(datos: NuevoClienteData): Promise<Cliente | nu
     prospecto_id:       datos.prospecto_id ?? null,
     estado:             datos.estado ?? "activo",
   };
+  if (datos.sifen_receptor_extranjero === true) insert.sifen_receptor_extranjero = true;
+  if (datos.sifen_receptor_extranjero === false) insert.sifen_receptor_extranjero = false;
+  if (datos.sifen_codigo_pais !== undefined) {
+    insert.sifen_codigo_pais = datos.sifen_codigo_pais == null ? null : String(datos.sifen_codigo_pais).trim() || null;
+  }
+  if (datos.sifen_tipo_doc_receptor !== undefined) {
+    insert.sifen_tipo_doc_receptor =
+      datos.sifen_tipo_doc_receptor == null ? null : Number(datos.sifen_tipo_doc_receptor);
+  }
 
   const { data, error } = await supabase
     .from("clientes")
@@ -289,6 +310,23 @@ export function construirPatchActualizacionCliente(datos: ActualizarClienteInput
   if (datos.direccion !== undefined) patch.direccion = datos.direccion ?? null;
   if (datos.ciudad !== undefined) patch.ciudad = datos.ciudad ?? null;
   if (datos.pais !== undefined) patch.pais = datos.pais ?? null;
+  if (datos.sifen_receptor_extranjero !== undefined) {
+    patch.sifen_receptor_extranjero = Boolean(datos.sifen_receptor_extranjero);
+  }
+  if (datos.sifen_codigo_pais !== undefined) {
+    patch.sifen_codigo_pais =
+      datos.sifen_codigo_pais == null || String(datos.sifen_codigo_pais).trim() === ""
+        ? null
+        : String(datos.sifen_codigo_pais).trim().toUpperCase();
+  }
+  if (datos.sifen_tipo_doc_receptor !== undefined) {
+    if (datos.sifen_tipo_doc_receptor == null) {
+      patch.sifen_tipo_doc_receptor = null;
+    } else {
+      const n = Number(datos.sifen_tipo_doc_receptor);
+      patch.sifen_tipo_doc_receptor = Number.isFinite(n) ? n : null;
+    }
+  }
   if (datos.sitio_web !== undefined) patch.sitio_web = datos.sitio_web ?? null;
   if (datos.instagram !== undefined) patch.instagram = datos.instagram ?? null;
   if (datos.linkedin !== undefined) patch.linkedin = datos.linkedin ?? null;
