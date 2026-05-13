@@ -82,6 +82,7 @@ export interface SifenBuildConfigRow {
 export interface SifenBuildElectronicaRow {
   id: string;
   estado_sifen: EstadoSifen;
+  sifen_regeneracion_seq?: number | null;
 }
 
 export interface BuildSifenPayloadInput {
@@ -387,9 +388,12 @@ export function validateAndBuildSifenPayload(input: BuildSifenPayloadInput): Bui
     return { ok: false, error: "La factura no tiene tipo." };
   }
 
+  const rawSeq = facturaElectronica.sifen_regeneracion_seq;
+  const regSeq = Number.isFinite(Number(rawSeq)) ? Math.max(0, Math.floor(Number(rawSeq))) : 0;
   const sifen: SifenPayloadMeta = {
     factura_electronica_id: facturaElectronica.id,
     estado_sifen: facturaElectronica.estado_sifen,
+    ...(regSeq > 0 ? { sifen_regeneracion_seq: regSeq } : {}),
   };
 
   const payload: SifenFacturaPayloadBase = {

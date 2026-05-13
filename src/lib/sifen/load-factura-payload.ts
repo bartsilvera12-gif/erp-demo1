@@ -69,7 +69,7 @@ export async function loadValidatedSifenPayload(
       .maybeSingle(),
     supabase
       .from("factura_electronica")
-      .select("id, estado_sifen")
+      .select("id, estado_sifen, sifen_regeneracion_seq")
       .eq("factura_id", fid)
       .eq("empresa_id", empresaId)
       .maybeSingle(),

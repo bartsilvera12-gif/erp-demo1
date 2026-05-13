@@ -50,7 +50,9 @@ export async function POST(
 
     const { data: feSnapshot, error: errSnap } = await supabase
       .from("factura_electronica")
-      .select("id, xml_path, xml_firmado_path, estado_sifen")
+      .select(
+        "id, xml_path, xml_firmado_path, estado_sifen, sifen_regeneracion_seq, error, cdc, sifen_d_prot_cons_lote, sifen_ultima_respuesta_consulta_lote, sifen_ultima_respuesta_recibe_lote"
+      )
       .eq("factura_id", fid)
       .eq("empresa_id", auth.empresa_id)
       .maybeSingle();
@@ -76,14 +78,57 @@ export async function POST(
       );
     }
 
+    const previousEstado = String(feSnapshot.estado_sifen ?? "borrador");
+    const rawPrev = feSnapshot.sifen_regeneracion_seq;
+    const previousRegSeq = Number.isFinite(Number(rawPrev)) ? Math.max(0, Math.floor(Number(rawPrev))) : 0;
+    let bumpRechazoAplicado = false;
+
+    if (previousEstado === "rechazado") {
+      const nextSeq = previousRegSeq + 1;
+      const { data: bumped, error: bumpErr } = await supabase
+        .from("factura_electronica")
+        .update({ sifen_regeneracion_seq: nextSeq })
+        .eq("id", feSnapshot.id)
+        .eq("empresa_id", auth.empresa_id)
+        .eq("estado_sifen", "rechazado")
+        .eq("sifen_regeneracion_seq", previousRegSeq)
+        .select("sifen_regeneracion_seq")
+        .maybeSingle();
+
+      if (bumpErr) {
+        return NextResponse.json(errorResponse(bumpErr.message), { status: 500 });
+      }
+      if (!bumped) {
+        return NextResponse.json(
+          errorResponse(
+            "No se pudo reservar una nueva revisión del documento (el estado pudo cambiar). Actualizá la página e intentá de nuevo."
+          ),
+          { status: 409 }
+        );
+      }
+      bumpRechazoAplicado = true;
+    }
+
+    const revertBumpRegSeq = async () => {
+      if (!bumpRechazoAplicado) return;
+      bumpRechazoAplicado = false;
+      await supabase
+        .from("factura_electronica")
+        .update({ sifen_regeneracion_seq: previousRegSeq })
+        .eq("id", feSnapshot.id)
+        .eq("empresa_id", auth.empresa_id);
+    };
+
     const loaded = await loadValidatedSifenPayload(supabase, auth.empresa_id, fid);
     if (!loaded.ok) {
+      await revertBumpRegSeq();
       return NextResponse.json(errorResponse(loaded.error.message), {
         status: loaded.error.status,
       });
     }
 
     if (loaded.payload.sifen.factura_electronica_id !== feSnapshot.id) {
+      await revertBumpRegSeq();
       return NextResponse.json(errorResponse("Inconsistencia entre factura electrónica y payload."), {
         status: 500,
       });
@@ -105,6 +150,7 @@ export async function POST(
         actividadEconomicaDescripcion: loaded.payload.emisor.actividad_economica_descripcion,
       });
     } catch (e) {
+      await revertBumpRegSeq();
       const msg = e instanceof Error ? e.message : "Error al generar XML SIFEN";
       return NextResponse.json(errorResponse(msg), { status: 400 });
     }
@@ -115,18 +161,19 @@ export async function POST(
 
     const bucketOk = await ensureSifenStorageBucket(supabase);
     if (!bucketOk.ok) {
+      await revertBumpRegSeq();
       return NextResponse.json(errorResponse(`Storage SIFEN: ${bucketOk.message}`), { status: 500 });
     }
 
     const up = await uploadSifenXml(supabase, objectPath, xmlString);
     if (!up.ok) {
+      await revertBumpRegSeq();
       return NextResponse.json(
         errorResponse(`No se pudo guardar el XML en storage: ${up.message}`),
         { status: 500 }
       );
     }
 
-    const previousEstado = String(feSnapshot.estado_sifen ?? "borrador");
     const previousXmlPath =
       feSnapshot.xml_path === null || feSnapshot.xml_path === undefined
         ? null
@@ -143,6 +190,14 @@ export async function POST(
         estado_sifen: "generado",
         xml_firmado_path: null,
         ...(cdc ? { cdc } : {}),
+        ...(previousEstado === "rechazado"
+          ? {
+              error: null,
+              sifen_d_prot_cons_lote: null,
+              sifen_ultima_respuesta_consulta_lote: null,
+              sifen_ultima_respuesta_recibe_lote: null,
+            }
+          : {}),
       })
       .eq("id", feSnapshot.id)
       .eq("empresa_id", auth.empresa_id)
@@ -151,6 +206,7 @@ export async function POST(
 
     if (errUpdate || !updatedRow) {
       await removeSifenObject(supabase, objectPath);
+      await revertBumpRegSeq();
       return NextResponse.json(
         errorResponse(
           errUpdate?.message ??
@@ -160,10 +216,13 @@ export async function POST(
       );
     }
 
+    bumpRechazoAplicado = false;
+
     const detalle: SifenApiXmlGeneracionDetalle = {
       origen: "api_xml",
       factura_id: fid,
       xml_path: objectPath,
+      ...(previousEstado === "rechazado" ? { sifen_regeneracion_seq: previousRegSeq + 1 } : {}),
     };
 
     const { error: errEvento } = await supabase.from("factura_electronica_evento").insert({
@@ -180,6 +239,16 @@ export async function POST(
           xml_path: previousXmlPath,
           estado_sifen: previousEstado,
           xml_firmado_path: previousSignedPath,
+          ...(previousEstado === "rechazado"
+            ? {
+                sifen_regeneracion_seq: previousRegSeq,
+                error: feSnapshot.error ?? null,
+                cdc: feSnapshot.cdc ?? null,
+                sifen_d_prot_cons_lote: feSnapshot.sifen_d_prot_cons_lote ?? null,
+                sifen_ultima_respuesta_consulta_lote: feSnapshot.sifen_ultima_respuesta_consulta_lote ?? null,
+                sifen_ultima_respuesta_recibe_lote: feSnapshot.sifen_ultima_respuesta_recibe_lote ?? null,
+              }
+            : {}),
         })
         .eq("id", feSnapshot.id)
         .eq("empresa_id", auth.empresa_id);

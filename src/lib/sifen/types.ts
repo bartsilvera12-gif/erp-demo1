@@ -148,6 +148,8 @@ export interface FacturaElectronicaDTO {
   empresa_id: string;
   factura_id: string;
   estado_sifen: EstadoSifen;
+  /** Contador de regeneración tras rechazo SET (semilla dCodSeg / CDC). */
+  sifen_regeneracion_seq?: number | null;
   cdc: string | null;
   xml_path: string | null;
   xml_firmado_path: string | null;
@@ -195,6 +197,8 @@ export interface SifenApiXmlGeneracionDetalle {
   origen: "api_xml";
   factura_id: string;
   xml_path: string;
+  /** Presente si la generación reservó una nueva revisión (estado previo `rechazado`). */
+  sifen_regeneracion_seq?: number;
 }
 
 /** Payload base JSON para armar el DE SIFEN (sin XML). */
@@ -259,6 +263,12 @@ export interface SifenPayloadItem {
 export interface SifenPayloadMeta {
   factura_electronica_id: string;
   estado_sifen: EstadoSifen;
+  /**
+   * Si > 0, altera la semilla de `dCodSeg` (y el CDC del DE) respecto al borrador inicial.
+   * Se incrementa en BD al regenerar XML desde `rechazado` (evita reutilizar el mismo Id/CDC
+   * de un DE ya rechazado al volver a firmar y enviar).
+   */
+  sifen_regeneracion_seq?: number;
 }
 
 /** Respuesta de GET /api/facturas/[id]/sifen/payload */

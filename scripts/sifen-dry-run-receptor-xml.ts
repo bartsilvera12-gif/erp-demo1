@@ -39,11 +39,6 @@ const items = [
   },
 ];
 
-const sifenMeta = {
-  factura_electronica_id: "00000000-0000-4000-8000-0000000000bb",
-  estado_sifen: "borrador" as const,
-};
-
 const xmlOpts = {
   timbradoFechaInicio: "2026-01-01",
   ambiente: "test" as const,
@@ -66,13 +61,22 @@ function extractGDatRec(xml: string): string {
   return xml.slice(a, b + "</gDatRec>".length);
 }
 
+function extractCdc(xml: string): string {
+  const m = /\bId="(\d{44})"/.exec(xml);
+  assert(m != null, "No se encontró CDC (Id) en el XML");
+  return m[1]!;
+}
+
 function runCase(name: string, receptor: SifenFacturaPayloadBase["receptor"], checks: { mustHave?: string[]; mustNot?: string[] }) {
   const base: SifenFacturaPayloadBase = {
     emisor: { ...emisorBase },
     documento: { ...documentoBase },
     receptor,
     items,
-    sifen: { ...sifenMeta },
+    sifen: {
+      factura_electronica_id: "00000000-0000-4000-8000-0000000000bb",
+      estado_sifen: "borrador",
+    },
   };
   const xml = buildOfficialRdeFacturaElectronicaXml(base, xmlOpts);
   const bloque = extractGDatRec(xml);
@@ -86,7 +90,7 @@ function runCase(name: string, receptor: SifenFacturaPayloadBase["receptor"], ch
 }
 
 runCase(
-  "receptor paraguayo con RUC (dRucRec/dDVRec)",
+  "receptor paraguayo con RUC (dRucRec/dDVRec, iTiOpe B2B)",
   {
     cliente_id: "00000000-0000-4000-8000-000000000001",
     nombre: "Cliente Local SA",
@@ -97,11 +101,14 @@ runCase(
     email: null,
     receptor_extranjero: false,
   },
-  { mustHave: ["<dRucRec>", "<dDVRec>", "<cPaisRec>PRY</cPaisRec>"], mustNot: ["<dNumIDRec>"] }
+  {
+    mustHave: ["<dRucRec>", "<dDVRec>", "<cPaisRec>PRY</cPaisRec>", "<iNatRec>1</iNatRec>", "<iTiOpe>1</iTiOpe>"],
+    mustNot: ["<dNumIDRec>", "<iTiOpe>4</iTiOpe>"],
+  }
 );
 
 runCase(
-  "receptor paraguayo solo CI (sin dRucRec)",
+  "receptor paraguayo solo CI (sin dRucRec; iTiOpe B2B)",
   {
     cliente_id: "00000000-0000-4000-8000-000000000002",
     nombre: "Persona Natural",
@@ -112,14 +119,17 @@ runCase(
     email: null,
     receptor_extranjero: false,
   },
-  { mustHave: ["<dNumIDRec>1234567</dNumIDRec>", "<cPaisRec>PRY</cPaisRec>"], mustNot: ["<dRucRec>"] }
+  {
+    mustHave: ["<dNumIDRec>1234567</dNumIDRec>", "<cPaisRec>PRY</cPaisRec>", "<iNatRec>2</iNatRec>", "<iTiOpe>1</iTiOpe>"],
+    mustNot: ["<dRucRec>", "<iTiOpe>4</iTiOpe>"],
+  }
 );
 
 runCase(
-  "receptor extranjero PER (sin dRucRec; identificación 11 dígitos)",
+  "receptor extranjero (iNatRec 2, iTiOpe B2F=4, sin dRucRec)",
   {
     cliente_id: "00000000-0000-4000-8000-000000000003",
-    nombre: "QUEIPOS SAC (ejemplo genérico)",
+    nombre: "Cliente extranjero de prueba",
     ruc: "20603666098",
     documento: "20603666098",
     direccion: null,
@@ -131,9 +141,63 @@ runCase(
     num_id_receptor: "20603666098",
   },
   {
-    mustHave: ["<cPaisRec>PER</cPaisRec>", "<dNumIDRec>20603666098</dNumIDRec>", "<iTipIDRec>9</iTipIDRec>"],
-    mustNot: ["<dRucRec>", "<dDVRec>"],
+    mustHave: [
+      "<cPaisRec>PER</cPaisRec>",
+      "<dNumIDRec>20603666098</dNumIDRec>",
+      "<iTipIDRec>9</iTipIDRec>",
+      "<iNatRec>2</iNatRec>",
+      "<iTiOpe>4</iTiOpe>",
+    ],
+    mustNot: ["<dRucRec>", "<dDVRec>", "<iTiOpe>1</iTiOpe>"],
   }
 );
+
+const feId = "00000000-0000-4000-8000-0000000000bb";
+const xml0 = buildOfficialRdeFacturaElectronicaXml(
+  {
+    emisor: { ...emisorBase },
+    documento: { ...documentoBase },
+    receptor: {
+      cliente_id: "00000000-0000-4000-8000-000000000003",
+      nombre: "Cliente extranjero de prueba",
+      ruc: "20603666098",
+      documento: "20603666098",
+      direccion: null,
+      telefono: null,
+      email: null,
+      receptor_extranjero: true,
+      codigo_pais_iso3: "PER",
+      tipo_doc_receptor: 9,
+      num_id_receptor: "20603666098",
+    },
+    items,
+    sifen: { factura_electronica_id: feId, estado_sifen: "borrador" },
+  },
+  xmlOpts
+);
+const xml1 = buildOfficialRdeFacturaElectronicaXml(
+  {
+    emisor: { ...emisorBase },
+    documento: { ...documentoBase },
+    receptor: {
+      cliente_id: "00000000-0000-4000-8000-000000000003",
+      nombre: "Cliente extranjero de prueba",
+      ruc: "20603666098",
+      documento: "20603666098",
+      direccion: null,
+      telefono: null,
+      email: null,
+      receptor_extranjero: true,
+      codigo_pais_iso3: "PER",
+      tipo_doc_receptor: 9,
+      num_id_receptor: "20603666098",
+    },
+    items,
+    sifen: { factura_electronica_id: feId, estado_sifen: "rechazado", sifen_regeneracion_seq: 1 },
+  },
+  xmlOpts
+);
+assert(extractCdc(xml0) !== extractCdc(xml1), "CDC debe cambiar cuando sifen_regeneracion_seq > 0 (misma factura electrónica)");
+console.log("OK: CDC distinto con sifen_regeneracion_seq=1 vs sin secuencia");
 
 console.log("\nDry-run receptor SIFEN: todas las comprobaciones pasaron (sin envío a SET).");

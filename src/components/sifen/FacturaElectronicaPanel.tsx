@@ -40,7 +40,7 @@ function subtituloSifenEjecutivo(resumen: Resumen, debugUi: boolean): string {
       case "aprobado":
         return "DE aprobado.";
       case "rechazado":
-        return "SET rechazó el DE. Revisá el detalle abajo.";
+        return "SET rechazó el DE. Usá «Regenerar documento» para volver a generar el XML (nuevo CDC si corresponde), luego firmá y enviá.";
       case "error_envio":
         return fe.error?.trim()
           ? fe.error.trim().length > 140
@@ -66,7 +66,7 @@ function subtituloSifenEjecutivo(resumen: Resumen, debugUi: boolean): string {
     case "aprobado":
       return "Documento aprobado.";
     case "rechazado":
-      return "El documento fue rechazado. Revisá el detalle abajo.";
+      return "El documento fue rechazado. Podés regenerar el XML y luego firmar y enviar de nuevo.";
     case "error_envio":
       return fe.error?.trim()
         ? fe.error.trim().length > 140
@@ -103,7 +103,7 @@ function ResumenSifenCompacto({ resumen, debugUi }: { resumen: Resumen; debugUi:
 
 /** Alineado a POST …/sifen/xml: se puede regenerar en `enviado` para corregir DE rechazado o pendiente. */
 const XML_BLOQUEADOS = new Set(["aprobado", "cancelado"]);
-const FIRMAR_BLOQUEADOS = new Set(["aprobado", "enviado", "cancelado"]);
+const FIRMAR_BLOQUEADOS = new Set(["aprobado", "enviado", "cancelado", "rechazado"]);
 
 /** Texto cuando consulta-lote no trae `gResProcLote` (0365 ≠ “sigue en cola”). */
 function mensajeConsultaSinFilasPorCdc(uc: SifenConsultaLoteUltimaPersistida): string {
@@ -264,6 +264,29 @@ export function FacturaElectronicaPanel({
             : kind === "xml"
               ? "XML generado correctamente."
               : "XML firmado correctamente.",
+      });
+      await refresh();
+    } catch (e) {
+      setFlash({ kind: "err", text: e instanceof Error ? e.message : "Error de red" });
+    } finally {
+      setAction(null);
+    }
+  };
+
+  /** Solo POST XML local (sin firma ni SET). Tras `rechazado`, el API puede reservar nueva revisión de CDC. */
+  const regenerarDocumentoRechazado = async () => {
+    setFlash(null);
+    setAction("xml");
+    try {
+      const res = await fetchWithSupabaseSession(`/api/facturas/${facturaId}/sifen/xml`, { method: "POST" });
+      if (!res.ok) {
+        setFlash({ kind: "err", text: await readApiError(res) });
+        return;
+      }
+      setFlash({
+        kind: "ok",
+        text:
+          "XML regenerado en el servidor. Si el documento estaba rechazado, puede haberse asignado un nuevo CDC: revisá el resumen y continuá con firmar y enviar cuando corresponda. Este paso no envía datos al SET.",
       });
       await refresh();
     } catch (e) {
@@ -552,6 +575,16 @@ export function FacturaElectronicaPanel({
               )}
 
               <div className="flex flex-wrap items-center gap-3">
+                {stStr === "rechazado" && puedeGenerarXml ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void regenerarDocumentoRechazado()}
+                    className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm font-semibold shadow-sm disabled:opacity-45 disabled:cursor-not-allowed hover:bg-slate-50"
+                  >
+                    {action === "xml" ? "Regenerando…" : "Regenerar documento"}
+                  </button>
+                ) : null}
                 {primaryConsultarLote ? (
                   <button
                     type="button"

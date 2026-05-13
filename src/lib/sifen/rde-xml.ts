@@ -348,8 +348,15 @@ export function buildOfficialRdeFacturaElectronicaXml(
   /** Debe coincidir con `gEmis.iTipCont` y entrar en el CDC antes de la fecha (SET / TIPS). */
   const iTipContEmi = iTipContCodigo(emisor.razon_social);
 
-  /** Sin timestamp: mismo documento electrónico → mismo dCodSeg/CDC al regenerar XML (exigencia típica SET / trazabilidad). */
-  const semillaSeg = base.sifen.factura_electronica_id;
+  /**
+   * Semilla `dCodSeg` (y CDC): por defecto el id de `factura_electronica` (mismo DE al regenerar en borrador/generado).
+   * Tras rechazo SET, `sifen_regeneracion_seq > 0` en BD altera la semilla para obtener un CDC nuevo antes de reenviar.
+   */
+  const regSeq = Math.max(0, Math.floor(Number(base.sifen.sifen_regeneracion_seq ?? 0)));
+  const semillaSeg =
+    regSeq > 0
+      ? `${base.sifen.factura_electronica_id}:r${String(regSeq)}`
+      : base.sifen.factura_electronica_id;
   const dCodSeg = dCodSegNueveDigitos(cscParaCodSeg, semillaSeg);
 
   const { cdc, dDVId } = generarCdcFacturaElectronica({
@@ -437,8 +444,9 @@ export function buildOfficialRdeFacturaElectronicaXml(
     if (!num) {
       throw new Error("Receptor extranjero SIFEN: falta num_id_receptor en el payload.");
     }
+    /** tiTiOpe (DE_Types v150): 1=B2B, 4=B2F. Receptor extranjero (iNatRec=2) exige B2F, no B2B. */
     recParts.push(textEl("iNatRec", "2"));
-    recParts.push(textEl("iTiOpe", "1"));
+    recParts.push(textEl("iTiOpe", "4"));
     recParts.push(textEl("cPaisRec", cPais));
     recParts.push(textEl("dDesPaisRe", dDesPais));
     recParts.push(textEl("iTipIDRec", String(tipo)));
@@ -656,6 +664,7 @@ export function buildOfficialRdeFacturaElectronicaXml(
     "<gDatGralOpe>",
     textEl("dFeEmiDE", dFeEmiDE),
     "<gOpeCom>",
+    /** iTipTra: el XSD no acopla iTipTra con iTiOpe B2F; se mantiene venta de mercadería (1) salvo normativa adicional. */
     textEl("iTipTra", "1"),
     textEl("dDesTipTra", XSD_DES_TIP_TRA_VENTA_MERC),
     textEl("iTImp", "1"),
