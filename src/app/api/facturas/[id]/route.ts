@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTenantSupabaseFromAuth } from "@/lib/supabase/tenant-api";
+import { getFacturasSupabaseFromAuth } from "@/lib/facturacion/facturas-service-client";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
 
@@ -7,13 +7,17 @@ import { API_ERRORS } from "@/lib/api/errors";
 /**
  * GET /api/facturas/[id]
  * Factura de la empresa autenticada + texto corto del cliente (para UI).
+ *
+ * Usa el helper de facturación (PG shim para tenants `erp_*` no expuestos en PostgREST,
+ * service role estándar para `zentra_erp` y legacy). Antes usaba `getTenantSupabaseFromAuth`,
+ * que devolvía `PGRST106 Invalid schema` para schemas `erp_*`.
  */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const ctx = await getTenantSupabaseFromAuth(request);
+    const ctx = await getFacturasSupabaseFromAuth(request);
     if (!ctx) {
       return NextResponse.json(errorResponse(API_ERRORS.UNAUTHORIZED), { status: 401 });
     }

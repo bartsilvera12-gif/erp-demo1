@@ -61,6 +61,8 @@ const ALLOWED_TABLES = new Set([
   "facturas",
   "factura_items",
   "pagos",
+  "factura_electronica",
+  "factura_electronica_evento",
 ]);
 
 function pgErr(message: string, code?: string): { message: string; code?: string } {
