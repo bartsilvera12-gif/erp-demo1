@@ -36,8 +36,10 @@ export type PhysicalCouponPrintRow = {
   sorteo_nombre: string;
   numero_orden: number;
   nombre_participante: string | null;
-  documento_masked: string | null;
-  whatsapp_masked: string | null;
+  /** Documento completo (sin enmascarar): cupón físico operativo para urna/control interno. */
+  documento: string | null;
+  /** Teléfono completo (sin enmascarar): cupón físico operativo para urna/control interno. */
+  whatsapp: string | null;
   /** Texto corto para la tarjeta: preferimos pago confirmado; si no hay, alta de la orden. */
   fecha_display: string;
 };
@@ -59,20 +61,16 @@ export function fechaReferenciaEntrada(fechaPago: string | null | undefined, cre
   return new Date(createdAt);
 }
 
-export function maskDocumento(raw: string | null | undefined): string | null {
+function normalizeDocumento(raw: string | null | undefined): string | null {
   if (raw == null) return null;
   const t = String(raw).trim();
-  if (!t) return null;
-  if (t.length <= 4) return "••••";
-  return `•••• ${t.slice(-4)}`;
+  return t || null;
 }
 
-export function maskWhatsapp(raw: string | null | undefined): string | null {
+function normalizeWhatsapp(raw: string | null | undefined): string | null {
   if (raw == null) return null;
-  const digits = String(raw).replace(/\D/g, "");
-  if (!digits) return null;
-  if (digits.length <= 4) return "••••";
-  return `•••• ${digits.slice(-4)}`;
+  const t = String(raw).trim();
+  return t || null;
 }
 
 function formatFechaDisplay(d: Date): string {
@@ -144,8 +142,8 @@ function mapRow(args: {
     sorteo_nombre: args.sorteo_nombre,
     numero_orden: args.numero_orden,
     nombre_participante: nom,
-    documento_masked: maskDocumento(args.documento),
-    whatsapp_masked: maskWhatsapp(args.whatsapp_numero),
+    documento: normalizeDocumento(args.documento),
+    whatsapp: normalizeWhatsapp(args.whatsapp_numero),
     fecha_display: formatFechaDisplay(ref),
   };
 }

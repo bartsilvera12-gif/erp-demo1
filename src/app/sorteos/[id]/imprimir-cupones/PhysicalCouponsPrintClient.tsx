@@ -76,8 +76,8 @@ function escapeHtml(text: string): string {
 
 function renderCouponInner(row: PhysicalCouponPrintRow): string {
   const nombre = row.nombre_participante ? escapeHtml(row.nombre_participante) : "";
-  const docLine = row.documento_masked ? `<p>Doc. ${escapeHtml(row.documento_masked)}</p>` : "";
-  const telLine = row.whatsapp_masked ? `<p>Tel. ${escapeHtml(row.whatsapp_masked)}</p>` : "";
+  const docLine = row.documento ? `<p>Doc. ${escapeHtml(row.documento)}</p>` : "";
+  const telLine = row.whatsapp ? `<p>Tel. ${escapeHtml(row.whatsapp)}</p>` : "";
   return `
     <div class="coupon-top">
       <p class="coupon-sorteo">${escapeHtml(row.sorteo_nombre)}</p>
@@ -91,6 +91,42 @@ function renderCouponInner(row: PhysicalCouponPrintRow): string {
       <p class="coupon-fecha">${escapeHtml(row.fecha_display)}</p>
     </div>`;
 }
+
+/** Estilos base de la tarjeta de cupón, compartidos por todos los formatos. */
+const SHARED_COUPON_CARD_CSS = `
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    color: #0f172a;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: #fff;
+  }
+  .coupon-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px dashed #64748b;
+    border-radius: 8px;
+    padding: 10px;
+    text-align: center;
+    background: #fff;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .coupon-sorteo { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 0; }
+  .coupon-numero { font-size: 1.625rem; font-weight: 800; margin: 4px 0; font-variant-numeric: tabular-nums; color: #0f172a; }
+  .coupon-orden { font-size: 12px; color: #475569; margin: 0; }
+  .coupon-bottom { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #334155; }
+  .coupon-bottom p { margin: 2px 0; word-break: break-word; }
+  .coupon-nombre { font-weight: 600; }
+  .coupon-nombre.muted { color: #94a3b8; font-weight: 400; }
+  .coupon-fecha { margin-top: 4px !important; color: #64748b; }
+  .coupon-pad { visibility: hidden; break-inside: avoid; }
+  @media print {
+    html, body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+`;
 
 function buildSheetBody(rows: PhysicalCouponPrintRow[], layout: FormatLayout): string {
   const perPage = layout.cols * layout.rows;
@@ -118,53 +154,36 @@ function buildThermalBody(rows: PhysicalCouponPrintRow[]): string {
 
 function buildFormatCss(format: PrintFormat): string {
   const layout = FORMAT_LAYOUTS[format];
-  const commonReset = `
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; color: #000; font-family: Arial, "Helvetica Neue", Helvetica, sans-serif; background: #fff; }
-    @media print {
-      html, body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    }
-  `;
 
   if (layout.kind === "thermal") {
     const widthMm = format === "thermal_58" ? 58 : 80;
     const marginMm = format === "thermal_58" ? 2 : 3;
-    const numberSize = format === "thermal_58" ? "22pt" : "26pt";
-    const baseSize = format === "thermal_58" ? "10pt" : "11pt";
+    const numberSize = format === "thermal_58" ? "1.35rem" : "1.55rem";
+    const gapMm = format === "thermal_58" ? 2 : 3;
+    const cardPadding = format === "thermal_58" ? "6px" : "8px";
     return `
       @page { size: ${widthMm}mm auto; margin: ${marginMm}mm; }
-      ${commonReset}
-      body { width: ${widthMm - marginMm * 2}mm; font-size: ${baseSize}; }
-      .thermal-ticket-list { width: 100%; display: block; }
+      ${SHARED_COUPON_CARD_CSS}
+      body { width: ${widthMm - marginMm * 2}mm; }
+      .thermal-ticket-list {
+        display: flex;
+        flex-direction: column;
+        gap: ${gapMm}mm;
+        width: 100%;
+      }
       .coupon-card {
         width: 100%;
-        padding: 2mm 1mm;
-        border-top: 1px dashed #000;
-        margin: 0;
-        text-align: center;
-        break-inside: avoid;
-        page-break-inside: avoid;
+        padding: ${cardPadding};
       }
-      .coupon-card:first-child { border-top: 0; }
-      .coupon-top { display: block; }
-      .coupon-sorteo { font-size: ${baseSize}; font-weight: 700; text-transform: uppercase; margin: 0 0 1mm; }
-      .coupon-numero { font-size: ${numberSize}; font-weight: 800; margin: 1mm 0; font-variant-numeric: tabular-nums; letter-spacing: 0.5px; }
-      .coupon-orden { font-size: ${baseSize}; margin: 0 0 1mm; }
-      .coupon-bottom { margin-top: 1mm; padding-top: 1mm; border-top: 1px dotted #000; font-size: ${baseSize}; }
-      .coupon-bottom p { margin: 0.5mm 0; }
-      .coupon-nombre { font-weight: 600; word-break: break-word; }
-      .coupon-nombre.muted { color: #555; font-weight: 400; }
-      .coupon-fecha { margin-top: 1mm !important; }
+      .coupon-numero { font-size: ${numberSize}; }
     `;
   }
 
   const pageSize = format === "oficio" ? "216mm 330mm" : "A4";
-  const pageMargin = format === "oficio" ? "10mm" : "10mm";
   const maxWidth = format === "oficio" ? "196mm" : "190mm";
   return `
-    @page { size: ${pageSize}; margin: ${pageMargin}; }
-    ${commonReset}
-    html, body { color: #0f172a; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    @page { size: ${pageSize}; margin: 10mm; }
+    ${SHARED_COUPON_CARD_CSS}
     .coupon-page {
       display: grid;
       grid-template-columns: repeat(${layout.cols}, minmax(0, 1fr));
@@ -176,26 +195,6 @@ function buildFormatCss(format: PrintFormat): string {
       page-break-after: always;
     }
     .coupon-page:last-child { break-after: auto; page-break-after: auto; }
-    .coupon-card {
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      border: 1px dashed #64748b;
-      border-radius: 8px;
-      padding: 10px;
-      text-align: center;
-      background: #fff;
-      break-inside: avoid;
-      page-break-inside: avoid;
-    }
-    .coupon-sorteo { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 0; }
-    .coupon-numero { font-size: 1.625rem; font-weight: 800; margin: 4px 0; font-variant-numeric: tabular-nums; }
-    .coupon-orden { font-size: 12px; color: #475569; margin: 0; }
-    .coupon-bottom { margin-top: 8px; padding-top: 8px; border-top: 1px solid #e2e8f0; font-size: 11px; color: #334155; }
-    .coupon-nombre { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .coupon-nombre.muted { color: #94a3b8; }
-    .coupon-fecha { margin: 4px 0 0; color: #64748b; font-size: 11px; }
-    .coupon-pad { visibility: hidden; break-inside: avoid; }
   `;
 }
 
@@ -223,6 +222,35 @@ function buildPhysicalCouponsPrintDocument(
 ${body}
 </body>
 </html>`;
+}
+
+/** Tarjeta de cupón en pantalla — mismo diseño visual para todos los formatos. */
+function CouponCard({ row }: { row: PhysicalCouponPrintRow }) {
+  return (
+    <article className="flex flex-col justify-between rounded-lg border border-dashed border-slate-400 bg-slate-50/80 p-3 text-center shadow-sm print:bg-white print:shadow-none break-inside-avoid page-break-inside-avoid">
+      <div className="space-y-1">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+          {row.sorteo_nombre}
+        </p>
+        <p className="text-2xl font-bold tabular-nums text-slate-900">{row.numero_cupon}</p>
+        <p className="text-xs text-slate-600">
+          Orden <span className="font-semibold tabular-nums">{row.numero_orden}</span>
+        </p>
+      </div>
+      <div className="mt-2 space-y-0.5 border-t border-slate-200 pt-2 text-[11px] text-slate-700">
+        {row.nombre_participante ? (
+          <p className="font-semibold break-words" title={row.nombre_participante}>
+            {row.nombre_participante}
+          </p>
+        ) : (
+          <p className="text-slate-400">—</p>
+        )}
+        {row.documento ? <p className="break-words">Doc. {row.documento}</p> : null}
+        {row.whatsapp ? <p className="break-words">Tel. {row.whatsapp}</p> : null}
+        <p className="text-slate-500">{row.fecha_display}</p>
+      </div>
+    </article>
+  );
 }
 
 export default function PhysicalCouponsPrintClient({
@@ -297,8 +325,8 @@ export default function PhysicalCouponsPrintClient({
 
   const layout = FORMAT_LAYOUTS[selectedPrintFormat];
   const isThermal = layout.kind === "thermal";
-  const previewWidthMm = selectedPrintFormat === "thermal_58" ? 58 : 80;
-  const previewMaxWidth = selectedPrintFormat === "oficio" ? "196mm" : "190mm";
+  const thermalWidthMm = selectedPrintFormat === "thermal_58" ? 58 : 80;
+  const sheetMaxWidth = selectedPrintFormat === "oficio" ? "196mm" : "190mm";
   const perPage = layout.cols * layout.rows;
   const pages = isThermal ? [rows] : chunk(rows, perPage);
 
@@ -598,36 +626,11 @@ export default function PhysicalCouponsPrintClient({
 
           {isThermal ? (
             <div
-              className="mx-auto flex flex-col gap-2 bg-white"
-              style={{ width: `${previewWidthMm}mm`, maxWidth: "100%" }}
+              className="mx-auto flex flex-col gap-3 bg-white"
+              style={{ width: `${thermalWidthMm}mm`, maxWidth: "100%" }}
             >
               {rows.map((row) => (
-                <article
-                  key={row.cupon_id}
-                  className="border-t border-dashed border-black bg-white px-2 py-2 text-center text-black first:border-t-0 break-inside-avoid page-break-inside-avoid"
-                  style={{ fontFamily: "Arial, sans-serif" }}
-                >
-                  <p className="text-[11px] font-bold uppercase tracking-wide">{row.sorteo_nombre}</p>
-                  <p
-                    className="font-extrabold tabular-nums leading-tight"
-                    style={{ fontSize: selectedPrintFormat === "thermal_58" ? "20pt" : "24pt" }}
-                  >
-                    {row.numero_cupon}
-                  </p>
-                  <p className="text-[11px]">
-                    Orden <span className="font-semibold tabular-nums">{row.numero_orden}</span>
-                  </p>
-                  <div className="mt-1 border-t border-dotted border-black pt-1 text-[11px] leading-snug">
-                    {row.nombre_participante ? (
-                      <p className="font-semibold break-words">{row.nombre_participante}</p>
-                    ) : (
-                      <p className="text-slate-500">—</p>
-                    )}
-                    {row.documento_masked ? <p>Doc. {row.documento_masked}</p> : null}
-                    {row.whatsapp_masked ? <p>Tel. {row.whatsapp_masked}</p> : null}
-                    <p>{row.fecha_display}</p>
-                  </div>
-                </article>
+                <CouponCard key={row.cupon_id} row={row} />
               ))}
             </div>
           ) : (
@@ -635,7 +638,7 @@ export default function PhysicalCouponsPrintClient({
               <div
                 key={pi}
                 className={`print-page-break mx-auto ${pi > 0 ? "mt-8 print:mt-0" : ""}`}
-                style={{ maxWidth: previewMaxWidth }}
+                style={{ maxWidth: sheetMaxWidth }}
               >
                 <div
                   className="grid gap-3 print:gap-2"
@@ -645,32 +648,7 @@ export default function PhysicalCouponsPrintClient({
                   }}
                 >
                   {pageRows.map((row) => (
-                    <article
-                      key={row.cupon_id}
-                      className="flex flex-col justify-between rounded-lg border border-dashed border-slate-400 bg-slate-50/80 p-3 text-center shadow-sm print:bg-white print:shadow-none break-inside-avoid page-break-inside-avoid"
-                    >
-                      <div className="space-y-1">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                          {row.sorteo_nombre}
-                        </p>
-                        <p className="text-2xl font-bold tabular-nums text-slate-900">{row.numero_cupon}</p>
-                        <p className="text-xs text-slate-600">
-                          Orden <span className="font-semibold tabular-nums">{row.numero_orden}</span>
-                        </p>
-                      </div>
-                      <div className="mt-2 space-y-0.5 border-t border-slate-200 pt-2 text-[11px] text-slate-700">
-                        {row.nombre_participante ? (
-                          <p className="truncate" title={row.nombre_participante}>
-                            {row.nombre_participante}
-                          </p>
-                        ) : (
-                          <p className="text-slate-400">—</p>
-                        )}
-                        {row.documento_masked ? <p>Doc. {row.documento_masked}</p> : null}
-                        {row.whatsapp_masked ? <p>Tel. {row.whatsapp_masked}</p> : null}
-                        <p className="text-slate-500">{row.fecha_display}</p>
-                      </div>
-                    </article>
+                    <CouponCard key={row.cupon_id} row={row} />
                   ))}
                   {Array.from({ length: Math.max(0, perPage - pageRows.length) }).map((_, i) => (
                     <div
