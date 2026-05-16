@@ -6,8 +6,30 @@ import { API_ERRORS } from "@/lib/api/errors";
 import {
   updateProductoPg,
   rowToProductoApi,
+  getProductoPg,
   DuplicadoError,
 } from "@/lib/inventario/server/productos-pg";
+
+/**
+ * GET /api/productos/[id] — lee un producto via PG directo.
+ */
+export async function GET(
+  request: NextRequest,
+  ctxParams: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await ctxParams.params;
+    const ctx = await getTenantSupabaseFromAuth(request);
+    if (!ctx) return NextResponse.json(errorResponse(API_ERRORS.UNAUTHORIZED), { status: 401 });
+    const schema = await fetchDataSchemaForEmpresaId(ctx.auth.empresa_id);
+    const row = await getProductoPg(schema, ctx.auth.empresa_id, id);
+    if (!row) return NextResponse.json(errorResponse(API_ERRORS.NOT_FOUND), { status: 404 });
+    return NextResponse.json(successResponse({ producto: rowToProductoApi(row) }));
+  } catch (err) {
+    console.error("[/api/productos/[id] GET]", err instanceof Error ? err.message : err);
+    return NextResponse.json(errorResponse("No se pudo cargar el producto."), { status: 500 });
+  }
+}
 import { setCategoriaPrincipal } from "@/lib/inventario/server/catalogos-pg";
 import { normalizeUpperText, normalizeUpperCodigoBarras } from "@/lib/text/normalize";
 import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";

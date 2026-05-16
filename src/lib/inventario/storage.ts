@@ -88,36 +88,41 @@ function rowToMovimiento(row: MovimientoRow): MovimientoInventario {
 
 // ─── Productos ─────────────────────────────────────────────────────────────────
 
-/** Lista productos. RLS filtra por empresa automáticamente. */
+/** Lista productos via API server-side (PG directo, soporta tenants erp_* no expuestos). */
 export async function getProductos(): Promise<Producto[]> {
-  const supabase = await getBrowserSupabaseForEmpresaData();
-  const { data, error } = await supabase
-    .from("productos")
-    .select("*")
-    .eq("activo", true)
-    .order("nombre");
-
-  if (error) {
-    console.error("[inventario] getProductos:", error.message);
+  try {
+    const r = await fetch("/api/productos", { credentials: "include", cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.success) {
+      console.error("[inventario] getProductos:", (j as { error?: string })?.error ?? r.status);
+      return [];
+    }
+    const list = ((j.data as { productos?: ProductoRow[] }).productos ?? []) as ProductoRow[];
+    return list.map(rowToProducto);
+  } catch (err) {
+    console.error("[inventario] getProductos:", err instanceof Error ? err.message : err);
     return [];
   }
-  return (data as ProductoRow[]).map(rowToProducto);
 }
 
-/** Obtiene un producto por ID. */
+/** Obtiene un producto por ID via API server-side. */
 export async function getProducto(id: string): Promise<Producto | null> {
-  const supabase = await getBrowserSupabaseForEmpresaData();
-  const { data, error } = await supabase
-    .from("productos")
-    .select("*")
-    .eq("id", id)
-    .single();
-
-  if (error) {
-    console.error("[inventario] getProducto:", error.message);
+  try {
+    const r = await fetch(`/api/productos/${encodeURIComponent(id)}`, {
+      credentials: "include",
+      cache: "no-store",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.success) {
+      console.error("[inventario] getProducto:", (j as { error?: string })?.error ?? r.status);
+      return null;
+    }
+    const row = (j.data as { producto?: ProductoRow }).producto;
+    return row ? rowToProducto(row) : null;
+  } catch (err) {
+    console.error("[inventario] getProducto:", err instanceof Error ? err.message : err);
     return null;
   }
-  return rowToProducto(data as ProductoRow);
 }
 
 /**
@@ -244,19 +249,21 @@ export async function updateProducto(
 
 // ─── Movimientos ─────────────────────────────────────────────────────────────
 
-/** Lista movimientos. RLS filtra por empresa automáticamente. */
+/** Lista movimientos via API server-side (PG directo). */
 export async function getMovimientos(): Promise<MovimientoInventario[]> {
-  const supabase = await getBrowserSupabaseForEmpresaData();
-  const { data, error } = await supabase
-    .from("movimientos_inventario")
-    .select("*")
-    .order("fecha", { ascending: false });
-
-  if (error) {
-    console.error("[inventario] getMovimientos:", error.message);
+  try {
+    const r = await fetch("/api/inventario/movimientos", { credentials: "include", cache: "no-store" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j?.success) {
+      console.error("[inventario] getMovimientos:", (j as { error?: string })?.error ?? r.status);
+      return [];
+    }
+    const list = ((j.data as { movimientos?: MovimientoRow[] }).movimientos ?? []) as MovimientoRow[];
+    return list.map(rowToMovimiento);
+  } catch (err) {
+    console.error("[inventario] getMovimientos:", err instanceof Error ? err.message : err);
     return [];
   }
-  return (data as MovimientoRow[]).map(rowToMovimiento);
 }
 
 function calcularDelta(tipo: TipoMovimiento, cantidad: number): number {

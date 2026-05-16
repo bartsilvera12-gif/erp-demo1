@@ -9,13 +9,48 @@ import {
   rowToProductoApi,
   DuplicadoError,
 } from "@/lib/inventario/server/productos-pg";
+import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
+import { assertAllowedChatDataSchema } from "@/lib/supabase/chat-data-schema";
 import { normalizeUpperText, normalizeUpperCodigoBarras } from "@/lib/text/normalize";
+
+/**
+ * GET /api/productos — lista todos los productos activos via PG directo
+ * (soporta tenants erp_* no expuestos por PostgREST).
+ */
+export async function GET(request: NextRequest) {
+  try {
+    const ctx = await getTenantSupabaseFromAuth(request);
+    if (!ctx) {
+      return NextResponse.json(errorResponse(API_ERRORS.UNAUTHORIZED), { status: 401 });
+    }
+    const empresaId = ctx.auth.empresa_id;
+    const schemaRaw = await fetchDataSchemaForEmpresaId(empresaId);
+    const schema = assertAllowedChatDataSchema(schemaRaw);
+    const pool = getChatPostgresPool();
+    if (!pool) {
+      return NextResponse.json(errorResponse("Pool no disponible."), { status: 500 });
+    }
+    const t = quoteSchemaTable(schema, "productos");
+    const { rows } = await pool.query(
+      `SELECT id, empresa_id, nombre, sku, costo_promedio, precio_venta, stock_actual, stock_minimo,
+              unidad_medida, metodo_valuacion, activo, created_at, updated_at,
+              codigo_barras, codigo_barras_interno, imagen_path, imagen_url,
+              categoria_principal_id, ubicacion_principal_id, proveedor_principal_id
+         FROM ${t}
+        WHERE empresa_id = $1::uuid AND activo = true
+        ORDER BY nombre`,
+      [empresaId]
+    );
+    return NextResponse.json(successResponse({ productos: rows }));
+  } catch (err) {
+    console.error("[/api/productos GET]", err instanceof Error ? err.message : err);
+    return NextResponse.json(errorResponse("No se pudieron cargar los productos."), { status: 500 });
+  }
+}
 import {
   setCategoriaPrincipal,
   setStockUbicacionInicial,
 } from "@/lib/inventario/server/catalogos-pg";
-import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
-import { assertAllowedChatDataSchema } from "@/lib/supabase/chat-data-schema";
 
 /** Valida que un id existe en la tabla indicada para la empresa. Devuelve true si OK, false si no. */
 async function existsInTenant(
