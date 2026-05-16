@@ -88,8 +88,10 @@ export default function UbicacionesPage() {
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800">Ubicaciones de inventario</h1>
-          <p className="text-gray-600">Depósitos, salones, pasillos, estantes, góndolas.</p>
+          <h1 className="text-3xl font-bold text-gray-800">Depósitos y ubicaciones</h1>
+          <p className="text-gray-600">
+            Donde se almacena físicamente cada producto: depósitos, salones, pasillos, góndolas, estantes, zonas.
+          </p>
         </div>
         <Link href="/inventario" className="text-sm text-sky-700 hover:text-sky-900 underline">
           ← Volver a Inventario

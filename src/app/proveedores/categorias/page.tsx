@@ -82,8 +82,15 @@ export default function ProveedorCategoriasPage() {
           <Link href="/proveedores" className="text-sm text-sky-600 hover:underline">
             ← Proveedores
           </Link>
-          <h1 className="mt-2 text-3xl font-bold text-gray-800">Categorías de proveedor</h1>
+          <h1 className="mt-2 text-3xl font-bold text-gray-800">Rubros de proveedor</h1>
           <p className="text-gray-600">Etiquetas para clasificar proveedores (textil, importación, etc.).</p>
+          <div className="mt-3 max-w-2xl rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <strong>No confundir con Categorías de productos.</strong> Estos rubros agrupan
+            proveedores. Para clasificar productos usá{" "}
+            <Link href="/inventario/categorias" className="underline font-medium">
+              Inventario / Categorías
+            </Link>.
+          </div>
         </div>
       </div>
 
