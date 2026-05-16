@@ -111,6 +111,14 @@ export default function ExcelImportWizard({
                   {preview.summary.warnings} advertencia(s) — revisá la tabla.
                 </div>
               )}
+              {typeof preview.summary.movimientos_a_generar === "number" && (
+                <div className="text-xs bg-indigo-50 border border-indigo-200 rounded p-2 text-indigo-800">
+                  <strong>Impacto en inventario:</strong>{" "}
+                  {preview.summary.movimientos_a_generar} movimiento(s) ·
+                  +{preview.summary.unidades_entrada ?? 0} entrada(s) ·
+                  −{preview.summary.unidades_salida ?? 0} salida(s)
+                </div>
+              )}
               {preview.summary.faltantes && (
                 <FaltantesBox f={preview.summary.faltantes} />
               )}
@@ -141,6 +149,13 @@ export default function ExcelImportWizard({
                 <Stat label="Errores" value={commit.summary.errors} color="red" />
                 <Stat label="Warnings" value={commit.summary.warnings} color="amber" />
               </div>
+              {typeof commit.summary.movimientos_generados === "number" && (
+                <div className="text-xs bg-indigo-50 border border-indigo-200 rounded p-2 text-indigo-800">
+                  <strong>Movimientos generados:</strong> {commit.summary.movimientos_generados} ·
+                  +{commit.summary.unidades_entrada ?? 0} entrada(s) ·
+                  −{commit.summary.unidades_salida ?? 0} salida(s)
+                </div>
+              )}
               {commit.errors.length > 0 && (
                 <ul className="text-xs bg-red-50 border border-red-200 rounded p-2 max-h-40 overflow-y-auto">
                   {commit.errors.map((e, i) => <li key={i}>• {e}</li>)}

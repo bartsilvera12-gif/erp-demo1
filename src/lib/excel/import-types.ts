@@ -18,6 +18,10 @@ export interface PreviewSummary {
   warnings: number;
   /** Lista de nombres de categorias/proveedores/ubicaciones faltantes. */
   faltantes?: { categorias: string[]; proveedores: string[]; ubicaciones: string[] };
+  /** Solo productos: impacto en stock. */
+  movimientos_a_generar?: number;
+  unidades_entrada?: number;
+  unidades_salida?: number;
 }
 
 export interface PreviewResponse {
@@ -33,6 +37,9 @@ export interface CommitResultSummary {
   skipped: number;
   errors: number;
   warnings: number;
+  movimientos_generados?: number;
+  unidades_entrada?: number;
+  unidades_salida?: number;
 }
 
 export interface CommitResponse {

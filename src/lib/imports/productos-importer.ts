@@ -11,6 +11,7 @@ interface ProductoExistente {
   id: string;
   sku: string;
   codigo_barras: string | null;
+  stock_actual: number;
 }
 
 export interface ProductoParsed {
@@ -88,7 +89,7 @@ export async function buildResolverMaps(schemaRaw: string, empresaId: string): P
   const tU = quoteSchemaTable(schema, "inventario_ubicaciones");
 
   const [prods, cats, provs, ubis] = await Promise.all([
-    pool.query<ProductoExistente>(`SELECT id, sku, codigo_barras FROM ${tP} WHERE empresa_id=$1::uuid`, [empresaId]),
+    pool.query<ProductoExistente>(`SELECT id, sku, codigo_barras, stock_actual FROM ${tP} WHERE empresa_id=$1::uuid`, [empresaId]),
     pool.query<{ id: string; nombre: string }>(`SELECT id, nombre FROM ${tC} WHERE empresa_id=$1::uuid AND activo=true`, [empresaId]),
     pool.query<{ id: string; nombre: string }>(`SELECT id, nombre FROM ${tPr} WHERE empresa_id=$1::uuid`, [empresaId]),
     pool.query<{ id: string; nombre: string; codigo: string | null }>(`SELECT id, nombre, codigo FROM ${tU} WHERE empresa_id=$1::uuid AND activo=true`, [empresaId]),
@@ -97,8 +98,9 @@ export async function buildResolverMaps(schemaRaw: string, empresaId: string): P
   const productosBySku = new Map<string, ProductoExistente>();
   const productosByCodigo = new Map<string, ProductoExistente>();
   for (const p of prods.rows) {
-    if (p.sku) productosBySku.set(p.sku.toUpperCase(), p);
-    if (p.codigo_barras) productosByCodigo.set(p.codigo_barras.toUpperCase(), p);
+    const normalized: ProductoExistente = { id: p.id, sku: p.sku, codigo_barras: p.codigo_barras, stock_actual: Number(p.stock_actual) };
+    if (p.sku) productosBySku.set(p.sku.toUpperCase(), normalized);
+    if (p.codigo_barras) productosByCodigo.set(p.codigo_barras.toUpperCase(), normalized);
   }
   const categoriasByName = new Map<string, string>();
   for (const c of cats.rows) categoriasByName.set(c.nombre.trim().toUpperCase(), c.id);
@@ -118,6 +120,7 @@ export function buildPreview(parsed: ProductoParsed[], maps: ResolverMaps): Prev
   const provsFaltantes = new Set<string>();
   const ubisFaltantes = new Set<string>();
   let insertar = 0, actualizar = 0, errores = 0, warnings = 0;
+  let totalEntrada = 0, totalSalida = 0, movimientosGenerar = 0;
   const omitir = 0;
   const skuVistos = new Set<string>();
   const codbarVistos = new Set<string>();
@@ -131,10 +134,13 @@ export function buildPreview(parsed: ProductoParsed[], maps: ResolverMaps): Prev
 
     // Match contra DB existente
     let matchId: string | null = null;
+    let stockAnterior: number | null = null;
     if (p.codigo_barras && maps.productosByCodigo.has(p.codigo_barras)) {
-      matchId = maps.productosByCodigo.get(p.codigo_barras)!.id;
+      const ex = maps.productosByCodigo.get(p.codigo_barras)!;
+      matchId = ex.id; stockAnterior = ex.stock_actual;
     } else if (p.sku && maps.productosBySku.has(p.sku)) {
-      matchId = maps.productosBySku.get(p.sku)!.id;
+      const ex = maps.productosBySku.get(p.sku)!;
+      matchId = ex.id; stockAnterior = ex.stock_actual;
     }
     p.match_id = matchId;
 
@@ -159,6 +165,25 @@ export function buildPreview(parsed: ProductoParsed[], maps: ResolverMaps): Prev
     else if (action === "ERROR") errores++;
     if (p.warnings.length > 0) warnings++;
 
+    // Calcular impacto de stock que se generara
+    let stockMov: string = "SIN MOVIMIENTO";
+    if (!hasErr) {
+      if (action === "INSERT" && p.stock_actual > 0) {
+        stockMov = `ENTRADA +${p.stock_actual}`;
+        totalEntrada += p.stock_actual;
+        movimientosGenerar++;
+      } else if (action === "UPDATE" && stockAnterior != null) {
+        const delta = p.stock_actual - stockAnterior;
+        if (delta > 0) {
+          stockMov = `ENTRADA +${delta} (prev=${stockAnterior})`;
+          totalEntrada += delta; movimientosGenerar++;
+        } else if (delta < 0) {
+          stockMov = `SALIDA ${delta} (prev=${stockAnterior})`;
+          totalSalida += -delta; movimientosGenerar++;
+        }
+      }
+    }
+
     return {
       row_number: p.row_number,
       action: action as "INSERT" | "UPDATE" | "ERROR" | "SKIP",
@@ -168,6 +193,8 @@ export function buildPreview(parsed: ProductoParsed[], maps: ResolverMaps): Prev
         NOMBRE: p.nombre, SKU: p.sku, CODIGO_BARRAS: p.codigo_barras || "(auto)",
         CATEGORIA: p.categoria_nombre, PROVEEDOR: p.proveedor_nombre, UBICACION: p.ubicacion_nombre,
         COSTO: p.costo_promedio, PRECIO: p.precio_venta, STOCK: p.stock_actual,
+        STOCK_ANTERIOR: stockAnterior ?? "",
+        MOVIMIENTO: stockMov,
       },
     };
   });
@@ -181,6 +208,9 @@ export function buildPreview(parsed: ProductoParsed[], maps: ResolverMaps): Prev
         proveedores: [...provsFaltantes],
         ubicaciones: [...ubisFaltantes],
       },
+      movimientos_a_generar: movimientosGenerar,
+      unidades_entrada: totalEntrada,
+      unidades_salida: totalSalida,
     },
     rows,
     headers: ["NOMBRE","SKU","CODIGO_BARRAS","CATEGORIA","PROVEEDOR_PRINCIPAL","UBICACION_PRINCIPAL","UNIDAD_MEDIDA","COSTO_PROMEDIO","PRECIO_VENTA","STOCK_ACTUAL","STOCK_MINIMO","METODO_VALUACION","ACTIVO"],
@@ -193,8 +223,17 @@ export interface CommitOutcome {
   skipped: number;
   errors: number;
   warnings: number;
+  movimientos_generados: number;
+  unidades_entrada: number;
+  unidades_salida: number;
   errorMessages: string[];
   warningMessages: string[];
+}
+
+export interface CommitContext {
+  filename?: string | null;
+  createdBy?: string | null;
+  usuarioNombre?: string | null;
 }
 
 export async function commitProductos(
@@ -202,18 +241,54 @@ export async function commitProductos(
   empresaId: string,
   parsed: ProductoParsed[],
   maps: ResolverMaps,
-  crearFaltantes: boolean
+  crearFaltantes: boolean,
+  ctx: CommitContext = {}
 ): Promise<CommitOutcome> {
   const schema = assertAllowedChatDataSchema(schemaRaw);
-  const pool = getChatPostgresPool();
-  if (!pool) throw new Error("Pool no disponible.");
+  const poolMaybe = getChatPostgresPool();
+  if (!poolMaybe) throw new Error("Pool no disponible.");
+  const pool = poolMaybe;
   const tP = quoteSchemaTable(schema, "productos");
   const tC = quoteSchemaTable(schema, "categorias_productos");
   const tPr = quoteSchemaTable(schema, "proveedores");
   const tU = quoteSchemaTable(schema, "inventario_ubicaciones");
+  const tM = quoteSchemaTable(schema, "movimientos_inventario");
   const tSec = `"${schema.replace(/"/g, '""')}".incrementar_secuencia_producto`;
+  const refImport = `IMPORT_EXCEL:${(ctx.filename ?? "").slice(0, 80)}`;
 
-  const out: CommitOutcome = { inserted: 0, updated: 0, skipped: 0, errors: 0, warnings: 0, errorMessages: [], warningMessages: [] };
+  const out: CommitOutcome = {
+    inserted: 0, updated: 0, skipped: 0, errors: 0, warnings: 0,
+    movimientos_generados: 0, unidades_entrada: 0, unidades_salida: 0,
+    errorMessages: [], warningMessages: [],
+  };
+
+  async function registrarMovimiento(
+    producto_id: string, producto_nombre: string, producto_sku: string,
+    tipo: "ENTRADA" | "SALIDA", origen: "inventario_inicial" | "ajuste_manual",
+    cantidad: number, costo_unitario: number, refExtra?: string
+  ): Promise<void> {
+    if (cantidad <= 0) return;
+    const refFinal = refExtra ? `${refImport} ${refExtra}` : refImport;
+    try {
+      await pool.query(
+        `INSERT INTO ${tM} (
+           empresa_id, producto_id, producto_nombre, producto_sku,
+           tipo, cantidad, costo_unitario, origen, referencia, fecha,
+           created_by, usuario_nombre
+         ) VALUES (
+           $1::uuid, $2::uuid, $3, $4, $5, $6::numeric, $7::numeric, $8, $9, now(),
+           $10::uuid, $11
+         )`,
+        [empresaId, producto_id, producto_nombre, producto_sku, tipo, cantidad,
+         costo_unitario, origen, refFinal, ctx.createdBy ?? null, ctx.usuarioNombre ?? null]
+      );
+      out.movimientos_generados++;
+      if (tipo === "ENTRADA") out.unidades_entrada += cantidad;
+      else out.unidades_salida += cantidad;
+    } catch (e) {
+      out.warningMessages.push(`No se pudo registrar movimiento para ${producto_nombre}: ${(e as Error).message.slice(0, 120)}`);
+    }
+  }
 
   // Crear faltantes (categorias/proveedores/ubicaciones) si corresponde
   if (crearFaltantes) {
@@ -260,7 +335,12 @@ export async function commitProductos(
 
       try {
         if (p.match_id) {
-          // UPDATE
+          // UPDATE — leer stock anterior para calcular delta y generar movimiento
+          const prevQ = await pool.query<{ stock_actual: string | number; nombre: string; sku: string }>(
+            `SELECT stock_actual, nombre, sku FROM ${tP} WHERE id=$1::uuid AND empresa_id=$2::uuid`,
+            [p.match_id, empresaId]
+          );
+          const stockAnterior = Number(prevQ.rows[0]?.stock_actual ?? 0);
           await pool.query(
             `UPDATE ${tP} SET
                nombre=$1, sku=$2, codigo_barras=NULLIF($3,''),
@@ -275,6 +355,16 @@ export async function commitProductos(
              categoriaId, proveedorId, ubicacionId, p.match_id, empresaId]
           );
           out.updated++;
+          // Movimiento por delta (ajuste_manual + ENTRADA/SALIDA segun signo)
+          const delta = p.stock_actual - stockAnterior;
+          if (delta !== 0) {
+            await registrarMovimiento(
+              p.match_id, p.nombre, p.sku,
+              delta > 0 ? "ENTRADA" : "SALIDA", "ajuste_manual",
+              Math.abs(delta), p.costo_promedio,
+              `Δ ${delta > 0 ? "+" : ""}${delta} (prev=${stockAnterior} new=${p.stock_actual})`
+            );
+          }
         } else {
           // Generar codigo_barras_interno si no vino
           let codigoBarras = p.codigo_barras;
@@ -289,7 +379,7 @@ export async function commitProductos(
               }
             } catch (e) { out.warningMessages.push(`Fila ${p.row_number}: no se pudo generar código interno (${(e as Error).message})`); }
           }
-          await pool.query(
+          const inserted = await pool.query<{ id: string }>(
             `INSERT INTO ${tP} (
                empresa_id, nombre, sku, codigo_barras, codigo_barras_interno,
                unidad_medida, costo_promedio, precio_venta, stock_actual, stock_minimo,
@@ -298,12 +388,20 @@ export async function commitProductos(
                $1::uuid, $2, NULLIF($3,''), NULLIF($4,''), $5::boolean,
                $6, $7::numeric, $8::numeric, $9::numeric, $10::numeric,
                $11, $12::boolean, $13::uuid, $14::uuid, $15::uuid
-             )`,
+             ) RETURNING id`,
             [empresaId, p.nombre, p.sku, codigoBarras, codigoInterno,
              p.unidad_medida, p.costo_promedio, p.precio_venta, p.stock_actual, p.stock_minimo,
              p.metodo_valuacion, p.activo, categoriaId, proveedorId, ubicacionId]
           );
           out.inserted++;
+          // Movimiento de inventario inicial si stock > 0
+          if (p.stock_actual > 0 && inserted.rows[0]?.id) {
+            await registrarMovimiento(
+              inserted.rows[0].id, p.nombre, p.sku,
+              "ENTRADA", "inventario_inicial",
+              p.stock_actual, p.costo_promedio
+            );
+          }
         }
         if (p.warnings.length > 0) out.warnings++;
       } catch (e) {
