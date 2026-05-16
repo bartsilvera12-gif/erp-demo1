@@ -250,12 +250,29 @@ export interface SearchHitRow {
   codigo_barras: string | null;
   codigo_barras_interno: boolean;
   precio_venta: string | number;
+  costo_promedio: string | number;
   stock_actual: string | number;
+  stock_minimo: string | number;
   unidad_medida: string;
+  metodo_valuacion: string;
   imagen_path: string | null;
   imagen_url: string | null;
+  categoria_nombre: string | null;
+  proveedor_nombre: string | null;
+  ubicacion_nombre: string | null;
+  ubicacion_tipo: string | null;
 }
 
+/**
+ * Busqueda multi-token tipo POS.
+ * - Separa q en tokens por espacios.
+ * - Cada token debe matchear (ILIKE %tok%) en al menos uno de:
+ *   nombre, sku, codigo_barras, categoria.nombre, proveedor.nombre,
+ *   ubicacion.nombre. Permite matches en cualquier orden.
+ * - JOINs con categorias_productos / proveedores / inventario_ubicaciones
+ *   para devolver nombres legibles al UI.
+ * - Orden por relevancia simple: stock>0 primero, luego nombre.
+ */
 export async function searchProductosPg(
   schemaRaw: string,
   empresaId: string,
@@ -263,22 +280,46 @@ export async function searchProductosPg(
   limit: number
 ): Promise<SearchHitRow[]> {
   const schema = assertAllowedChatDataSchema(schemaRaw);
-  const t = tProd(schema);
+  const tP = tProd(schema);
+  const tC = quoteSchemaTable(schema, "categorias_productos");
+  const tPr = quoteSchemaTable(schema, "proveedores");
+  const tU = quoteSchemaTable(schema, "inventario_ubicaciones");
   const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
   const params: unknown[] = [empresaId];
-  let where = `empresa_id = $1::uuid AND activo = true`;
-  if (q && q.length >= 2) {
-    const safe = q.replace(/[%_]/g, (m) => "\\" + m);
-    params.push(`%${safe}%`);
-    where += ` AND (nombre ILIKE $2 OR sku ILIKE $2 OR codigo_barras ILIKE $2)`;
+
+  // Token-based AND con OR de columnas por token
+  const tokens = (q ?? "")
+    .trim()
+    .split(/\s+/)
+    .filter((t) => t.length >= 2)
+    .map((t) => t.replace(/[%_]/g, (m) => "\\" + m))
+    .slice(0, 6); // max 6 tokens para limitar coste
+
+  const whereParts: string[] = [`p.empresa_id = $1::uuid`, `p.activo = true`];
+  for (const tok of tokens) {
+    params.push(`%${tok}%`);
+    const idx = params.length;
+    whereParts.push(
+      `(p.nombre ILIKE $${idx} OR p.sku ILIKE $${idx} OR p.codigo_barras ILIKE $${idx}
+        OR c.nombre ILIKE $${idx} OR pr.nombre ILIKE $${idx} OR u.nombre ILIKE $${idx})`
+    );
   }
+
   const sql = `
-    SELECT id, nombre, sku, codigo_barras, codigo_barras_interno,
-           precio_venta, stock_actual, unidad_medida, imagen_path, imagen_url
-    FROM ${t}
-    WHERE ${where}
-    ORDER BY nombre
-    LIMIT ${safeLimit}
+    SELECT p.id, p.nombre, p.sku, p.codigo_barras, p.codigo_barras_interno,
+           p.precio_venta, p.costo_promedio, p.stock_actual, p.stock_minimo,
+           p.unidad_medida, p.metodo_valuacion, p.imagen_path, p.imagen_url,
+           c.nombre  AS categoria_nombre,
+           pr.nombre AS proveedor_nombre,
+           u.nombre  AS ubicacion_nombre,
+           u.tipo    AS ubicacion_tipo
+      FROM ${tP} p
+      LEFT JOIN ${tC}  c  ON c.id = p.categoria_principal_id
+      LEFT JOIN ${tPr} pr ON pr.id = p.proveedor_principal_id
+      LEFT JOIN ${tU}  u  ON u.id = p.ubicacion_principal_id
+     WHERE ${whereParts.join(" AND ")}
+     ORDER BY (p.stock_actual > 0) DESC, p.nombre
+     LIMIT ${safeLimit}
   `;
   const { rows } = await pool().query<SearchHitRow>(sql, params);
   return rows;

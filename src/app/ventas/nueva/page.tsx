@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import MontoInput from "@/components/ui/MontoInput";
-import ProductPickerModal, { type ProductoPickerItem } from "@/components/inventario/ProductPickerModal";
+import ProductPickerModal, { type ProductoPickerItem, type AgregarVentaPayload } from "@/components/inventario/ProductPickerModal";
 import { saveVenta } from "@/lib/ventas/storage";
 import { getProductos } from "@/lib/inventario/storage";
 import type { TipoIvaVenta, TipoVenta, MonedaVenta, LineaVenta } from "@/lib/ventas/types";
@@ -142,6 +142,55 @@ export default function NuevaVentaPage() {
     setProductos((prev) => (prev.find((x) => x.id === prod.id) ? prev : [...prev, prod]));
     seleccionarProducto(prod);
     setPickerOpen(false);
+  }
+
+  /**
+   * Agregado directo desde el modal: arma la LineaVenta usando la misma
+   * logica que handleAgregarLinea pero con datos del modal, sin pasar
+   * por el form inline. Mantiene el modal abierto si todo OK.
+   */
+  function handleAgregarDesdePicker(payload: AgregarVentaPayload): boolean {
+    const { producto: p, cantidad, precio_input, iva } = payload;
+    // Validar tipo de cambio si moneda=USD
+    if (moneda === "USD" && (tipoCambioNum <= 0)) {
+      setErrorVenta("Cargá el tipo de cambio antes de agregar productos en USD.");
+      return false;
+    }
+    // Convertir precio a PYG
+    const precioPyg = moneda === "USD" ? precio_input * tipoCambioNum : precio_input;
+    // Verificar stock vs lo ya cargado
+    const yaEnCarrito = items.filter((i) => i.producto_id === p.id).reduce((s, i) => s + i.cantidad, 0);
+    const disp = p.stock_actual - yaEnCarrito;
+    if (cantidad > disp) {
+      // El modal mostrara su propio feedback; tambien actualizamos el banner.
+      return false;
+    }
+    const subtotal = cantidad * precioPyg;
+    const montoIva = calcIva(iva, subtotal);
+    const totalLinea = subtotal + montoIva;
+
+    // Asegurar que el producto este en el array local (para que stock_actual
+    // se conozca en validaciones posteriores del form inline).
+    const prodLocal = pickerToProducto(p);
+    setProductos((prev) => (prev.find((x) => x.id === prodLocal.id) ? prev : [...prev, prodLocal]));
+
+    setItems((prev) => [
+      ...prev,
+      {
+        producto_id: p.id,
+        producto_nombre: p.nombre,
+        sku: p.sku,
+        cantidad,
+        precio_venta_original: precio_input,
+        precio_venta: precioPyg,
+        tipo_iva: iva,
+        subtotal,
+        monto_iva: montoIva,
+        total_linea: totalLinea,
+      },
+    ]);
+    setErrorVenta(null);
+    return true;
   }
 
   useEffect(() => {
@@ -430,12 +479,12 @@ export default function NuevaVentaPage() {
                   ref={comboInputRef}
                   type="text"
                   value={comboQuery}
-                  onChange={handleComboInput}
-                  onFocus={() => setComboOpen(true)}
-                  onKeyDown={handleComboKeyDown}
-                  placeholder="Nombre, SKU o código..."
+                  readOnly
+                  onFocus={() => setPickerOpen(true)}
+                  onClick={() => setPickerOpen(true)}
+                  placeholder="Click para abrir buscador — nombre, SKU, código, categoría, ubicación..."
                   autoComplete="off"
-                  className={`${inputClass} pr-8`}
+                  className={`${inputClass} pr-8 cursor-pointer bg-white`}
                 />
                 {/* Icono chevron */}
                 <svg
@@ -779,8 +828,11 @@ export default function NuevaVentaPage() {
       <ProductPickerModal
         open={pickerOpen}
         onClose={() => setPickerOpen(false)}
-        onSelect={handleSelectFromPicker}
+        onAgregar={handleAgregarDesdePicker}
         excludeIds={items.map((i) => i.producto_id)}
+        moneda={moneda}
+        tipoCambio={tipoCambioNum}
+        ivaDefault={lineaIva}
       />
     </div>
   );
