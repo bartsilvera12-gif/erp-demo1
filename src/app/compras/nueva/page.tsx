@@ -116,6 +116,8 @@ export default function NuevaCompraPage() {
   });
   const [errorSku, setErrorSku] = useState<string | null>(null);
   const [productoCreado, setProductoCreado] = useState<string | null>(null);
+  const [errorSubmit, setErrorSubmit] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   // ── Carga inicial ────────────────────────────────────────────────────────
 
@@ -190,38 +192,57 @@ export default function NuevaCompraPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (subtotal === 0 || precioVentaNum === 0) return;
+    setErrorSubmit(null);
+
+    // Validaciones visibles (antes silenciosas)
+    if (!form.proveedor_id) return setErrorSubmit("Seleccioná o agregá un proveedor.");
+    if (!form.producto_id) return setErrorSubmit("Seleccioná o agregá un producto.");
+    if (cantidadNum <= 0) return setErrorSubmit("La cantidad debe ser mayor a 0.");
+    if (costoUnitarioPYG <= 0) return setErrorSubmit("El costo unitario debe ser mayor a 0.");
+    if (precioVentaNum <= 0) return setErrorSubmit("El precio de venta debe ser mayor a 0.");
+    if (!form.nro_timbrado?.trim()) return setErrorSubmit("Ingresá el N° de timbrado.");
 
     const todosProductos = await getProductos();
     const proveedor = proveedores.find((p) => String(p.id) === form.proveedor_id);
     const producto = todosProductos.find((p) => p.id === form.producto_id);
-    if (!proveedor || !producto) return;
+    if (!proveedor) return setErrorSubmit("Proveedor no encontrado. Recargá e intentá de nuevo.");
+    if (!producto) return setErrorSubmit("Producto no encontrado. Recargá e intentá de nuevo.");
 
-    await saveCompra({
-      proveedor_id: String(proveedor.id),
-      proveedor_nombre: proveedor.nombre,
-      producto_id: producto.id,
-      producto_nombre: producto.nombre,
-      cantidad: cantidadNum,
-      moneda: form.moneda,
-      tipo_cambio: tipoCambioNum,
-      costo_unitario_original: costoInputNum,
-      costo_unitario: costoUnitarioPYG,
-      iva_tipo: form.iva_tipo,
-      subtotal,
-      monto_iva: montoIva,
-      total,
-      precio_venta: precioVentaNum,
-      margen_venta: margenVenta ?? 0,
-      tipo_pago: form.tipo_pago,
-      plazo_dias:
-        form.tipo_pago === "credito" && form.plazo_dias
-          ? parseInt(form.plazo_dias)
-          : undefined,
-      nro_timbrado: form.nro_timbrado,
-    });
+    setSubmitting(true);
+    try {
+      const res = await saveCompra({
+        proveedor_id: String(proveedor.id),
+        proveedor_nombre: proveedor.nombre,
+        producto_id: producto.id,
+        producto_nombre: producto.nombre,
+        cantidad: cantidadNum,
+        moneda: form.moneda,
+        tipo_cambio: tipoCambioNum,
+        costo_unitario_original: costoInputNum,
+        costo_unitario: costoUnitarioPYG,
+        iva_tipo: form.iva_tipo,
+        subtotal,
+        monto_iva: montoIva,
+        total,
+        precio_venta: precioVentaNum,
+        margen_venta: margenVenta ?? 0,
+        tipo_pago: form.tipo_pago,
+        plazo_dias:
+          form.tipo_pago === "credito" && form.plazo_dias
+            ? parseInt(form.plazo_dias)
+            : undefined,
+        nro_timbrado: form.nro_timbrado,
+      });
 
-    router.push("/compras");
+      if (!res.success) {
+        setErrorSubmit(res.error);
+        return;
+      }
+      if (res.warning) alert(res.warning);
+      router.push("/compras");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   // ── Handlers: inline PROVEEDOR ───────────────────────────────────────────
@@ -735,14 +756,20 @@ export default function NuevaCompraPage() {
             </div>
           )}
 
+          {errorSubmit && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p className="text-sm text-red-700">{errorSubmit}</p>
+            </div>
+          )}
+
           {/* ── Acciones ─────────────────────────────────────────────────── */}
           <div className="flex gap-4 pt-2">
             <button
               type="submit"
-              disabled={!calculosListos}
+              disabled={!calculosListos || submitting}
               className="bg-[#0EA5E9] hover:bg-[#0284C7] text-white px-5 py-3 rounded-lg text-sm font-medium transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
             >
-              Guardar compra
+              {submitting ? "Guardando..." : "Guardar compra"}
             </button>
             <button
               type="button"

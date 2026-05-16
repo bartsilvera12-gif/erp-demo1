@@ -43,8 +43,12 @@ export default function ComprasPage() {
   const [filtroTipoPago, setFiltroTipoPago] = useState<TipoPago | "">("");
 
   useEffect(() => {
-    const data = getCompras();
-    setTodas([...data].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()));
+    let cancel = false;
+    getCompras().then((data) => {
+      if (cancel) return;
+      setTodas([...data].sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime()));
+    });
+    return () => { cancel = true; };
   }, []);
 
   const filtradas = todas.filter((c) => {
