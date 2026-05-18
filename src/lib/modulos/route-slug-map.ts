@@ -44,16 +44,22 @@ function isOmnicanalDashboardSlug(slug: string): boolean {
 /**
  * Slugs otorgados explícitamente o por alias (p. ej. `clientes` incluye gestión de cartera).
  *
- * `inactiveSlugs` opcional: slugs presentes en `empresa_modulos` con `activo=false`. Cuando un slug
- * está en este set, ningún alias lo re-otorga (la desactivación explícita gana sobre el paquete legacy).
+ * - `inactiveSlugs` opcional: slugs presentes en `empresa_modulos` con `activo=false`. Cuando un slug
+ *   está en este set, ningún alias lo re-otorga (la desactivación explícita gana sobre el paquete legacy).
+ * - `strict` opcional: si es `true`, se aplica allowlist estricta — solo `grantedSlugs` otorga acceso,
+ *   los alias legacy (omnicanal → sub-slugs, clientes → gestion-clientes, ventas → notas_credito) NO
+ *   otorgan nada. Pensado para instancias dedicadas monocliente donde `empresa_modulos` es la única
+ *   fuente de verdad. Default `false` para compatibilidad multi-tenant.
  */
 export function isModuleSlugGranted(
   routeSlug: string,
   grantedSlugs: Set<string>,
-  inactiveSlugs?: Set<string>
+  inactiveSlugs?: Set<string>,
+  opts?: { strict?: boolean }
 ): boolean {
   if (grantedSlugs.has(routeSlug)) return true;
   if (inactiveSlugs?.has(routeSlug)) return false;
+  if (opts?.strict) return false;
   // Paquete legacy: un solo permiso para todo el stack dashboard omnicanal.
   if (grantedSlugs.has("omnicanal") && isOmnicanalDashboardSlug(routeSlug)) return true;
   // Compatibilidad: quien solo tiene "conversaciones" sigue entrando a historial / finalizadas / monitoreo.
@@ -72,28 +78,34 @@ export function isModuleSlugGranted(
 /**
  * Acceso a un ítem del menú (super admin ve todo; resto según empresa_modulos ∩ usuario_modulos).
  *
- * `inactiveSlugs` opcional: ver `isModuleSlugGranted`. Permite ocultar items del sidebar que la
- * empresa desactivó explícitamente, aunque otro slug del mismo paquete legacy esté activo.
+ * - `inactiveSlugs` opcional: ver `isModuleSlugGranted`.
+ * - `strict` opcional: ver `isModuleSlugGranted`. Permite ocultar items que no estén explícitamente
+ *   activos en `empresa_modulos`, ignorando aliases legacy.
  */
 export function canAccessSidebarSlug(
   slug: string,
   grantedSlugs: Set<string>,
   esSuperAdmin: boolean,
-  inactiveSlugs?: Set<string>
+  inactiveSlugs?: Set<string>,
+  opts?: { strict?: boolean }
 ): boolean {
   if (esSuperAdmin) return true;
   if (slug === "dashboard") return grantedSlugs.has("dashboard");
-  return isModuleSlugGranted(slug, grantedSlugs, inactiveSlugs);
+  return isModuleSlugGranted(slug, grantedSlugs, inactiveSlugs, opts);
 }
 
 /** Primera ruta de app a la que puede entrar el usuario (p. ej. tras login en `/` sin módulo dashboard). */
 export function firstAccessibleHref(
   grantedSlugs: Set<string>,
-  opts?: { superAdmin?: boolean; inactiveSlugs?: Set<string> }
+  opts?: { superAdmin?: boolean; inactiveSlugs?: Set<string>; strict?: boolean }
 ): string {
   if (opts?.superAdmin) return "/";
   for (const { slug, href } of SIDEBAR_SLUG_HREF_ORDER) {
-    if (canAccessSidebarSlug(slug, grantedSlugs, false, opts?.inactiveSlugs)) return href;
+    if (
+      canAccessSidebarSlug(slug, grantedSlugs, false, opts?.inactiveSlugs, { strict: opts?.strict })
+    ) {
+      return href;
+    }
   }
   return "/login";
 }

@@ -24,6 +24,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "No autenticado" }, { status: 401 });
     }
 
+    /**
+     * En instancia dedicada monocliente (`NEURA_INSTANCE_MODE=single_client`), `empresa_modulos`
+     * es la única fuente de verdad: los aliases legacy (omnicanal → finalizadas/historial/monitoreo,
+     * clientes → gestion-clientes, ventas → notas_credito) quedan inhabilitados.
+     */
+    const strictAllowlist =
+      (process.env.NEURA_INSTANCE_MODE ?? "").trim().toLowerCase() === "single_client";
+
     const supabase = createServiceRoleClient();
 
     const usuario = await resolveUsuarioErpFromAuthUser(supabase, user);
@@ -39,10 +47,17 @@ export async function GET(request: Request) {
           superAdmin: true,
           slugs: modulos.map((m) => m.slug).filter(Boolean),
           inactiveSlugs: [],
+          strictAllowlist,
           modulos: modulos.map((m) => ({ id: m.id, nombre: m.nombre, slug: m.slug })),
         });
       }
-      return NextResponse.json({ superAdmin: false, slugs: [], inactiveSlugs: [], modulos: [] });
+      return NextResponse.json({
+        superAdmin: false,
+        slugs: [],
+        inactiveSlugs: [],
+        strictAllowlist,
+        modulos: [],
+      });
     }
 
     const modulos = await resolveEffectiveModules(supabase, {
@@ -79,6 +94,7 @@ export async function GET(request: Request) {
       superAdmin,
       slugs: modulos.map((m) => m.slug).filter(Boolean),
       inactiveSlugs,
+      strictAllowlist,
       modulos: modulos.map((m) => ({ id: m.id, nombre: m.nombre, slug: m.slug })),
     });
   } catch (err: unknown) {

@@ -316,6 +316,7 @@ export default function Sidebar() {
   const pathname = usePathname();
   const [modulos, setModulos] = useState<ModuloEmpresa[]>([]);
   const [inactiveSlugsList, setInactiveSlugsList] = useState<string[]>([]);
+  const [strictAllowlist, setStrictAllowlist] = useState(false);
   const [favoritos, setFavoritos] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({
@@ -355,15 +356,18 @@ export default function Sidebar() {
         const bootstrapSuper = isBootstrapSuperAdminEmail(session.user.email ?? null);
 
         let inactiveList: string[] = [];
+        let strict = false;
         if (res.ok) {
           const body = (await res.json()) as {
             superAdmin?: boolean;
             modulos?: ModuloEmpresa[];
             inactiveSlugs?: string[];
+            strictAllowlist?: boolean;
           };
           superA = !!body.superAdmin || bootstrapSuper;
           modList = Array.isArray(body.modulos) ? body.modulos : [];
           inactiveList = Array.isArray(body.inactiveSlugs) ? body.inactiveSlugs : [];
+          strict = !!body.strictAllowlist;
         } else {
           superA = bootstrapSuper;
         }
@@ -398,11 +402,13 @@ export default function Sidebar() {
         setEsSuperAdmin(superA);
         setModulos(modList);
         setInactiveSlugsList(inactiveList);
+        setStrictAllowlist(strict);
       } catch {
         if (!cancelled) {
           setModulos([]);
           setEsSuperAdmin(false);
           setInactiveSlugsList([]);
+          setStrictAllowlist(false);
         }
       } finally {
         if (!cancelled) setCargando(false);
@@ -431,7 +437,9 @@ export default function Sidebar() {
   const modulosSlugs = new Set(modulos.map((m) => m.slug));
   const inactiveSlugsSet = useMemo(() => new Set(inactiveSlugsList), [inactiveSlugsList]);
   const hasAccess = (slug: string) =>
-    canAccessSidebarSlug(slug, modulosSlugs, esSuperAdmin, inactiveSlugsSet);
+    canAccessSidebarSlug(slug, modulosSlugs, esSuperAdmin, inactiveSlugsSet, {
+      strict: strictAllowlist,
+    });
 
   const isActive = (slug: string, href: string) => {
     const p = pathname ?? "";
@@ -449,27 +457,27 @@ export default function Sidebar() {
     const slugs = new Set(modulos.map((m) => m.slug));
     const idForSlug = (slug: string) => modulos.find((m) => m.slug === slug)?.id ?? slug;
     const access = (slug: string) =>
-      canAccessSidebarSlug(slug, slugs, esSuperAdmin, inactiveSlugsSet);
+      canAccessSidebarSlug(slug, slugs, esSuperAdmin, inactiveSlugsSet, { strict: strictAllowlist });
     return MENU_STRUCTURE.filter(
       (item) =>
         favoritos.includes(idForSlug(item.slug)) &&
         access(item.slug) &&
         menuItemMatchesQuery(item, menuSearchQuery)
     );
-  }, [favoritos, menuSearchQuery, modulos, esSuperAdmin, inactiveSlugsSet]);
+  }, [favoritos, menuSearchQuery, modulos, esSuperAdmin, inactiveSlugsSet, strictAllowlist]);
 
   const mainItemsFiltered = useMemo(() => {
     const slugs = new Set(modulos.map((m) => m.slug));
     const idForSlug = (slug: string) => modulos.find((m) => m.slug === slug)?.id ?? slug;
     const access = (slug: string) =>
-      canAccessSidebarSlug(slug, slugs, esSuperAdmin, inactiveSlugsSet);
+      canAccessSidebarSlug(slug, slugs, esSuperAdmin, inactiveSlugsSet, { strict: strictAllowlist });
     return MENU_STRUCTURE.filter(
       (item) =>
         !favoritos.includes(idForSlug(item.slug)) &&
         access(item.slug) &&
         menuItemMatchesQuery(item, menuSearchQuery)
     );
-  }, [favoritos, menuSearchQuery, modulos, esSuperAdmin, inactiveSlugsSet]);
+  }, [favoritos, menuSearchQuery, modulos, esSuperAdmin, inactiveSlugsSet, strictAllowlist]);
 
   const anyMenuVisible =
     favoritosItemsFiltered.length > 0 ||

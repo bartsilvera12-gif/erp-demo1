@@ -14,7 +14,12 @@ import {
 
 const PUBLIC_ROUTES = ["/login"];
 
-type ModuleAccess = { superAdmin: boolean; slugs: Set<string>; inactiveSlugs: Set<string> };
+type ModuleAccess = {
+  superAdmin: boolean;
+  slugs: Set<string>;
+  inactiveSlugs: Set<string>;
+  strict: boolean;
+};
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -55,6 +60,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       let superAdmin = false;
       let slugs: string[] = [];
       let inactiveSlugs: string[] = [];
+      let strict = false;
 
       const bootstrapSuper = isBootstrapSuperAdminEmail(session.user.email ?? null);
 
@@ -63,10 +69,12 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
           superAdmin?: boolean;
           slugs?: string[];
           inactiveSlugs?: string[];
+          strictAllowlist?: boolean;
         };
         superAdmin = !!data.superAdmin || bootstrapSuper;
         slugs = Array.isArray(data.slugs) ? data.slugs : [];
         inactiveSlugs = Array.isArray(data.inactiveSlugs) ? data.inactiveSlugs : [];
+        strict = !!data.strictAllowlist;
       } else {
         superAdmin = bootstrapSuper;
       }
@@ -84,6 +92,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         superAdmin,
         slugs: new Set(slugs),
         inactiveSlugs: new Set(inactiveSlugs),
+        strict,
       });
       setLoading(false);
     }
@@ -105,6 +114,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
         firstAccessibleHref(access.slugs, {
           superAdmin: false,
           inactiveSlugs: access.inactiveSlugs,
+          strict: access.strict,
         })
       );
       setBlockedSlug(null);
@@ -115,7 +125,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     if (
       slug &&
       !access.superAdmin &&
-      !isModuleSlugGranted(slug, access.slugs, access.inactiveSlugs)
+      !isModuleSlugGranted(slug, access.slugs, access.inactiveSlugs, { strict: access.strict })
     ) {
       setBlockedSlug(slug);
       return;
@@ -135,6 +145,7 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     const fallback = firstAccessibleHref(access.slugs, {
       superAdmin: access.superAdmin,
       inactiveSlugs: access.inactiveSlugs,
+      strict: access.strict,
     });
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center bg-gray-50">
