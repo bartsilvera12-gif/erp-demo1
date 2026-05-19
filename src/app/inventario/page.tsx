@@ -260,8 +260,9 @@ export default function InventarioPage() {
             </div>
           </div>
 
-          {/* Fila 2: valuación, ubicación, stock bajo, limpiar y contador */}
-          <div className="flex flex-wrap items-center gap-3">
+          {/* Fila 2: valuación, ubicación, stock bajo, limpiar y contador
+              Ocultada para instancia En lo de Mari — la lógica de filtros sigue activa pero sin UI. */}
+          <div className="hidden flex-wrap items-center gap-3">
             <div>
               <label className="block text-xs text-gray-400 mb-1">Valuación</label>
               <select
