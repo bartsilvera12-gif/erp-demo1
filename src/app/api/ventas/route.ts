@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getTenantSupabaseFromAuth } from "@/lib/supabase/tenant-api";
-import { fetchDataSchemaForEmpresaId } from "@/lib/supabase/empresa-data-schema";
-import { getChatPostgresPool, quoteSchemaTable } from "@/lib/supabase/chat-pg-pool";
-import { assertAllowedChatDataSchema } from "@/lib/supabase/chat-data-schema";
-import { queryWithRetry } from "@/lib/supabase/pg-retry";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { API_ERRORS } from "@/lib/api/errors";
 import type { Venta, LineaVenta, TipoIvaVenta } from "@/lib/ventas/types";
@@ -55,45 +51,42 @@ function mapItems(rows: VentaItemRow[]): LineaVenta[] {
   }));
 }
 
-/**
- * GET /api/ventas — listado via PG directo (soporta tenants erp_* no
- * expuestos por PostgREST).
- */
+/** GET /api/ventas — listado vía PostgREST (compatible Hostinger sin pool). */
 export async function GET(request: NextRequest) {
   try {
     const ctx = await getTenantSupabaseFromAuth(request);
     if (!ctx) return NextResponse.json(errorResponse(API_ERRORS.UNAUTHORIZED), { status: 401 });
     const empresaId = ctx.auth.empresa_id;
-    const schema = assertAllowedChatDataSchema(await fetchDataSchemaForEmpresaId(empresaId));
-    const pool = getChatPostgresPool();
-    if (!pool) return NextResponse.json(errorResponse("Pool no disponible."), { status: 500 });
 
-    const tV = quoteSchemaTable(schema, "ventas");
-    const tI = quoteSchemaTable(schema, "ventas_items");
+    const ventasQ = await ctx.supabase
+      .from("ventas")
+      .select(
+        "id, empresa_id, numero_control, moneda, tipo_cambio, subtotal, monto_iva, total, tipo_venta, plazo_dias, fecha"
+      )
+      .eq("empresa_id", empresaId)
+      .order("fecha", { ascending: false })
+      .limit(500);
+    if (ventasQ.error) throw new Error(ventasQ.error.message);
 
-    // Serializado (no Promise.all) para no agotar el pool session-mode (limite 15).
-    const ventasQ = await queryWithRetry<VentaRow>(pool,
-      `SELECT id, empresa_id, numero_control, moneda, tipo_cambio, subtotal, monto_iva,
-              total, tipo_venta, plazo_dias, fecha
-         FROM ${tV} WHERE empresa_id = $1::uuid
-        ORDER BY fecha DESC LIMIT 500`,
-      [empresaId]
-    );
-    const itemsQ = await queryWithRetry<VentaItemRow>(pool,
-      `SELECT venta_id, producto_id, producto_nombre, sku, cantidad,
-              precio_venta_original, precio_venta, tipo_iva, subtotal, monto_iva, total_linea
-         FROM ${tI} WHERE empresa_id = $1::uuid`,
-      [empresaId]
-    );
+    const itemsQ = await ctx.supabase
+      .from("ventas_items")
+      .select(
+        "venta_id, producto_id, producto_nombre, sku, cantidad, precio_venta_original, precio_venta, tipo_iva, subtotal, monto_iva, total_linea"
+      )
+      .eq("empresa_id", empresaId);
+    if (itemsQ.error) throw new Error(itemsQ.error.message);
+
+    const ventasRows = (ventasQ.data ?? []) as VentaRow[];
+    const itemsRows = (itemsQ.data ?? []) as VentaItemRow[];
 
     const byVenta = new Map<string, VentaItemRow[]>();
-    for (const row of itemsQ.rows) {
+    for (const row of itemsRows) {
       const list = byVenta.get(row.venta_id) ?? [];
       list.push(row);
       byVenta.set(row.venta_id, list);
     }
 
-    const ventas: Venta[] = ventasQ.rows.map((r) => {
+    const ventas: Venta[] = ventasRows.map((r) => {
       const lineRows = byVenta.get(r.id) ?? [];
       return {
         id: r.id,
