@@ -9,6 +9,17 @@ import type { MetodoValuacion } from "@/lib/inventario/types";
 import ProductImageUploader from "@/components/inventario/ProductImageUploader";
 import SelectFromList from "@/components/inventario/SelectFromList";
 
+// Opciones estándar de unidad de medida (UX simplificada gastro)
+const UNIDADES_OPCIONES = [
+  "UNIDAD","KG","G","LT","ML","CAJA","BOLSA","PAQUETE","DOCENA","LATA","BOTELLA","PORCION","COMBO",
+] as const;
+
+const TIPO_SUMMARY = {
+  reventa: { titulo: "Producto de reventa", descripcion: "Se compra y se vende tal cual. Controla stock y descuenta al vender.", icono: "🥤" },
+  menu:    { titulo: "Producto del menú",   descripcion: "Se vende en Ventas y genera pedido. No descuenta stock directo.",     icono: "🍕" },
+  materia: { titulo: "Materia prima / insumo", descripcion: "Se usa para recetas y costeo. No aparece como producto de venta.", icono: "🌾" },
+} as const;
+
 interface CatRow { id: string; nombre: string }
 interface UbiRow { id: string; nombre: string; tipo: string }
 interface ProvRow { id: string; nombre: string }
@@ -52,6 +63,10 @@ export default function EditarProductoPage() {
   // Clasificación gastronómica
   const [esVendible, setEsVendible] = useState(true);
   const [esInsumo, setEsInsumo] = useState(false);
+
+  // Tipo gastro inferido a partir de los flags (para UX simplificada)
+  type TipoGastro = "reventa" | "menu" | "materia";
+  const [tipoGastro, setTipoGastro] = useState<TipoGastro>("reventa");
 
   // Configuración gastronómica
   const [controlaStock, setControlaStock] = useState(true);
@@ -138,14 +153,21 @@ export default function EditarProductoPage() {
       setCategoriaId(p.categoria_principal_id ?? null);
       setUbicacionId(p.ubicacion_principal_id ?? null);
       setProveedorId(p.proveedor_principal_id ?? null);
-      setEsVendible(p.es_vendible ?? true);
-      setEsInsumo(p.es_insumo ?? false);
-      setControlaStock(p.controla_stock ?? true);
+      const esVend = p.es_vendible ?? true;
+      const esIns = p.es_insumo ?? false;
+      const ctrlStock = p.controla_stock ?? true;
+      setEsVendible(esVend);
+      setEsInsumo(esIns);
+      setControlaStock(ctrlStock);
       setValorizado(p.valorizado ?? true);
       setUnidadCompra(p.unidad_compra ?? "");
       setUnidadReceta(p.unidad_receta ?? "");
       setFactorCompraReceta(String(p.factor_compra_receta ?? 1));
       setTiempoPrepMinutos(String(p.tiempo_prep_minutos ?? 0));
+      // Inferir tipo gastro a partir de los flags
+      if (esIns) setTipoGastro("materia");
+      else if (esVend && !ctrlStock) setTipoGastro("menu");
+      else setTipoGastro("reventa");
     }).finally(() => {
       if (!cancelled) setCargando(false);
     });
@@ -311,11 +333,26 @@ export default function EditarProductoPage() {
     );
   }
 
+  const summary = TIPO_SUMMARY[tipoGastro];
+  const showStock = tipoGastro === "reventa";
+  const showPrecioVenta = tipoGastro !== "materia";
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-gray-800">Editar producto</h1>
         <p className="text-gray-600">Modifica los datos del producto</p>
+      </div>
+
+      <div className="bg-white rounded-xl border border-amber-200 shadow-sm p-5 max-w-5xl">
+        <div className="flex items-start gap-4">
+          <div className="text-3xl">{summary.icono}</div>
+          <div className="flex-1 min-w-0">
+            <div className="text-base font-semibold text-slate-900">{summary.titulo}</div>
+            <div className="text-sm text-slate-600 mt-0.5">{summary.descripcion}</div>
+          </div>
+          <div className="text-xs text-gray-400 shrink-0 italic">Cambiar tipo: editar flags</div>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow p-6 max-w-5xl">
@@ -345,26 +382,40 @@ export default function EditarProductoPage() {
 
           <div className="grid grid-cols-2 gap-6">
             <div>
-              <label className={labelClass}>SKU</label>
+              <label className={labelClass}>
+                SKU{tipoGastro === "reventa" ? "" : <span className="text-xs font-normal text-gray-400 ml-1">(opcional)</span>}
+              </label>
               <input
                 type="text"
                 name="sku"
                 value={form.sku}
                 onChange={handleChange}
                 className={`${inputClass} uppercase`}
-                required
+                required={tipoGastro === "reventa"}
               />
             </div>
             <div>
               <label className={labelClass}>Unidad de medida</label>
-              <input
-                type="text"
+              <select
                 name="unidad_medida"
                 value={form.unidad_medida}
                 onChange={handleChange}
                 className={`${inputClass} uppercase`}
                 required
-              />
+              >
+                {(() => {
+                  const cur = (form.unidad_medida ?? "").trim().toUpperCase();
+                  const opts = (UNIDADES_OPCIONES as readonly string[]).includes(cur) || !cur
+                    ? UNIDADES_OPCIONES
+                    : [...UNIDADES_OPCIONES, cur];
+                  return opts.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                      {!((UNIDADES_OPCIONES as readonly string[]).includes(u)) ? " (actual)" : ""}
+                    </option>
+                  ));
+                })()}
+              </select>
             </div>
           </div>
 
@@ -491,7 +542,8 @@ export default function EditarProductoPage() {
               </div>
             </div>
 
-            <div className="mt-5 pt-4 border-t border-gray-100">
+            {/* Clasificación — oculta (presets vienen del tipo gastro inferido) */}
+            <div className="hidden mt-5 pt-4 border-t border-gray-100">
               <label className={labelClass}>Clasificación</label>
               <div className="flex flex-wrap gap-4 mt-1">
                 <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
@@ -518,8 +570,8 @@ export default function EditarProductoPage() {
               </p>
             </div>
 
-            {/* Configuración gastronómica */}
-            <div className="mt-5 pt-4 border-t border-gray-100">
+            {/* Configuración gastronómica — oculta (no relevante en UX simplificada) */}
+            <div className="hidden mt-5 pt-4 border-t border-gray-100">
               <p className="text-xs uppercase tracking-wide font-semibold text-gray-500 mb-3">
                 Configuración gastronómica
               </p>
@@ -615,14 +667,14 @@ export default function EditarProductoPage() {
                   step="0.01"
                 />
               </div>
-              <div>
+              <div className={showPrecioVenta ? "" : "hidden"}>
                 <label className={labelClass}>Precio de venta (Gs.)</label>
                 <MontoInput
                   value={form.precio_venta}
                   onChange={handlePrecioChange}
                   className={inputClass}
                   decimals={false}
-                  required
+                  required={showPrecioVenta}
                 />
               </div>
             </div>
@@ -644,7 +696,7 @@ export default function EditarProductoPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className={`grid grid-cols-2 gap-6 ${showStock ? "" : "hidden"}`}>
             <div>
               <label className={labelClass}>Stock actual</label>
               <input

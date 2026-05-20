@@ -8,6 +8,17 @@ import SelectFromList from "@/components/inventario/SelectFromList";
 import { productoExiste, saveProducto } from "@/lib/inventario/storage";
 import type { MetodoValuacion } from "@/lib/inventario/types";
 
+// Opciones estándar de unidad de medida para gastro
+const UNIDADES_OPCIONES = [
+  "UNIDAD","KG","G","LT","ML","CAJA","BOLSA","PAQUETE","DOCENA","LATA","BOTELLA","PORCION","COMBO",
+] as const;
+
+const TIPO_SUMMARY = {
+  reventa: { titulo: "Producto de reventa", descripcion: "Se compra y se vende tal cual. Controla stock y descuenta al vender.", icono: "🥤" },
+  menu:    { titulo: "Producto del menú",   descripcion: "Se vende en Ventas y genera pedido. No descuenta stock directo.",     icono: "🍕" },
+  materia: { titulo: "Materia prima / insumo", descripcion: "Se usa para recetas y costeo. No aparece como producto de venta.", icono: "🌾" },
+} as const;
+
 interface CatRow { id: string; nombre: string }
 interface UbiRow { id: string; nombre: string; tipo: string }
 interface ProvRow { id: string; nombre: string }
@@ -51,14 +62,17 @@ export default function NuevoProductoPage() {
       setEsVendible(true);
       setEsInsumo(false);
       setControlaStock(true);
+      setForm((prev) => ({ ...prev, unidad_medida: prev.unidad_medida || "UNIDAD" }));
     } else if (tipo === "menu") {
       setEsVendible(true);
       setEsInsumo(false);
       setControlaStock(false);
+      setForm((prev) => ({ ...prev, unidad_medida: prev.unidad_medida || "UNIDAD" }));
     } else {
       setEsVendible(false);
       setEsInsumo(true);
       setControlaStock(false);
+      setForm((prev) => ({ ...prev, unidad_medida: prev.unidad_medida || "G" }));
     }
   }
 
@@ -420,22 +434,28 @@ export default function NuevoProductoPage() {
     );
   }
 
-  const tipoLabel =
-    tipoGastro === "reventa" ? "Reventa" : tipoGastro === "menu" ? "Menú" : "Materia prima";
+  const summary = TIPO_SUMMARY[tipoGastro];
+  const showStock = tipoGastro === "reventa";
+  const showPrecioVenta = tipoGastro !== "materia";
 
   return (
     <div className="space-y-8">
 
       <div>
         <h1 className="text-3xl font-bold text-gray-800">Nuevo producto</h1>
-        <div className="flex items-center gap-3 mt-1">
-          <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
-            Tipo: {tipoLabel}
-          </span>
+      </div>
+
+      <div className="bg-white rounded-xl border border-amber-200 shadow-sm p-5 max-w-5xl">
+        <div className="flex items-start gap-4">
+          <div className="text-3xl">{summary.icono}</div>
+          <div className="flex-1 min-w-0">
+            <div className="text-base font-semibold text-slate-900">{summary.titulo}</div>
+            <div className="text-sm text-slate-600 mt-0.5">{summary.descripcion}</div>
+          </div>
           <button
             type="button"
             onClick={() => setTipoGastro(null)}
-            className="text-xs text-gray-500 hover:text-gray-700 underline"
+            className="text-xs text-amber-700 hover:text-amber-900 underline shrink-0"
           >
             Cambiar tipo
           </button>
@@ -488,7 +508,9 @@ export default function NuevoProductoPage() {
           {/* SKU + Unidad de medida */}
           <div className="grid grid-cols-2 gap-6">
             <div>
-              <label className={labelClass}>SKU</label>
+              <label className={labelClass}>
+                SKU{tipoGastro === "reventa" ? "" : <span className="text-xs font-normal text-gray-400 ml-1">(opcional)</span>}
+              </label>
               <input
                 type="text"
                 name="sku"
@@ -496,21 +518,23 @@ export default function NuevoProductoPage() {
                 onChange={handleChange}
                 placeholder="Ej: OOTD-001"
                 className={`${inputClass} uppercase`}
-                required
+                required={tipoGastro === "reventa"}
               />
             </div>
 
             <div>
               <label className={labelClass}>Unidad de medida</label>
-              <input
-                type="text"
+              <select
                 name="unidad_medida"
                 value={form.unidad_medida}
                 onChange={handleChange}
-                placeholder="Ej: UNIDAD, KG, LT"
                 className={`${inputClass} uppercase`}
                 required
-              />
+              >
+                {UNIDADES_OPCIONES.map((u) => (
+                  <option key={u} value={u}>{u}</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -632,7 +656,7 @@ export default function NuevoProductoPage() {
                 <p className="mt-1.5 text-xs text-gray-400">(precio − costo) / costo</p>
               </div>
 
-              <div>
+              <div className={showPrecioVenta ? "" : "hidden"}>
                 <label className={labelClass}>Precio de venta (Gs.)</label>
                 <MontoInput
                   value={form.precio_venta}
@@ -640,7 +664,7 @@ export default function NuevoProductoPage() {
                   placeholder="Ej: 78000"
                   className={inputClass}
                   decimals={false}
-                  required
+                  required={showPrecioVenta}
                 />
               </div>
 
@@ -773,8 +797,8 @@ export default function NuevoProductoPage() {
               </div>
             </div>
 
-            {/* Clasificación gastronómica */}
-            <div className="mt-5 pt-4 border-t border-gray-100">
+            {/* Clasificación gastronómica — oculta (presets aplicados por el tipo seleccionado) */}
+            <div className="hidden mt-5 pt-4 border-t border-gray-100">
               <label className={labelClass}>Clasificación</label>
               <div className="flex flex-wrap gap-4 mt-1">
                 <label className="inline-flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
@@ -801,8 +825,8 @@ export default function NuevoProductoPage() {
               </p>
             </div>
 
-            {/* Configuración gastronómica */}
-            <div className="mt-5 pt-4 border-t border-gray-100">
+            {/* Configuración gastronómica — oculta (campos técnicos no necesarios en UX gastro simplificada) */}
+            <div className="hidden mt-5 pt-4 border-t border-gray-100">
               <p className="text-xs uppercase tracking-wide font-semibold text-gray-500 mb-3">
                 Configuración gastronómica
               </p>
@@ -874,8 +898,8 @@ export default function NuevoProductoPage() {
             </div>
           </div>
 
-          {/* Stock actual + Stock mínimo */}
-          <div>
+          {/* Stock actual + Stock mínimo — solo para Reventa (Menú/Materia no controlan stock en UX simple) */}
+          <div className={showStock ? "" : "hidden"}>
             <div className="grid grid-cols-2 gap-6">
               <div>
                 <label className={labelClass}>Stock actual</label>
