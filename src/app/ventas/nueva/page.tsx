@@ -6,7 +6,7 @@ import MontoInput from "@/components/ui/MontoInput";
 import ProductPickerModal, { type ProductoPickerItem, type AgregarVentaPayload } from "@/components/inventario/ProductPickerModal";
 import { saveVenta } from "@/lib/ventas/storage";
 import { getProductos } from "@/lib/inventario/storage";
-import type { TipoIvaVenta, TipoVenta, MonedaVenta, LineaVenta } from "@/lib/ventas/types";
+import type { TipoIvaVenta, TipoVenta, MonedaVenta, LineaVenta, MetodoPago } from "@/lib/ventas/types";
 import type { Producto } from "@/lib/inventario/types";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -102,6 +102,7 @@ export default function NuevaVentaPage() {
 
   // ── Cobro (solo CONTADO, no se persiste — solo ayuda al cajero) ───────────
   const [montoRecibido, setMontoRecibido] = useState("");
+  const [metodoPago, setMetodoPago] = useState<MetodoPago>("efectivo");
 
   // ── Línea en construcción ─────────────────────────────────────────────────
   const [lineaProdId, setLineaProdId] = useState("");
@@ -368,6 +369,7 @@ export default function NuevaVentaPage() {
         monto_iva:    totalIva,
         total:        totalGeneral,
         tipo_venta:   tipoVenta,
+        metodo_pago:  metodoPago,
       },
       modalidad === ""
         ? undefined
@@ -385,9 +387,9 @@ export default function NuevaVentaPage() {
       setErrorVenta(resultado.error);
       return;
     }
-    // Abrir ticket imprimible en nueva pestaña (con diálogo de impresión automático).
+    // Abrir comandas + ticket cliente en nueva pestaña con autoprint.
     try {
-      window.open(`/api/ventas/${resultado.venta.id}/ticket?auto=1`, "_blank", "noopener");
+      window.open(`/api/ventas/${resultado.venta.id}/ticket?mode=comandas&auto=1`, "_blank", "noopener");
     } catch {}
     router.push("/ventas");
   }
@@ -690,6 +692,25 @@ export default function NuevaVentaPage() {
                       <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">
                         Cobro
                       </p>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Método de pago</label>
+                        <div className="grid grid-cols-3 gap-1">
+                          {(["efectivo", "tarjeta", "transferencia"] as MetodoPago[]).map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setMetodoPago(m)}
+                              className={`text-xs py-1.5 rounded-md border transition-colors ${
+                                metodoPago === m
+                                  ? "border-[#0EA5E9] bg-[#0EA5E9]/10 text-[#0EA5E9] font-medium"
+                                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                              }`}
+                            >
+                              {m === "efectivo" ? "Efectivo" : m === "tarjeta" ? "Tarjeta" : "Transfer."}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                       <div>
                         <label className="block text-xs text-gray-600 mb-1">
                           Monto recibido (Gs.)

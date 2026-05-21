@@ -44,6 +44,7 @@ function toVentaResponse(
     tipo_cambio: number;
     tipo_venta: Venta["tipo_venta"];
     plazo_dias?: number;
+    metodo_pago?: Venta["metodo_pago"];
     subtotal: number;
     monto_iva: number;
     total: number;
@@ -72,6 +73,7 @@ function toVentaResponse(
     total: meta.total,
     tipo_venta: meta.tipo_venta,
     plazo_dias: meta.plazo_dias,
+    metodo_pago: meta.metodo_pago,
     fecha: meta.fechaIso,
   };
 }
@@ -106,6 +108,8 @@ export async function POST(request: NextRequest) {
       tipoVenta === "CREDITO" && o.plazo_dias != null && String(o.plazo_dias).trim() !== ""
         ? parseInt(String(o.plazo_dias), 10)
         : null;
+    const metodoPago: "efectivo" | "tarjeta" | "transferencia" =
+      o.metodo_pago === "tarjeta" || o.metodo_pago === "transferencia" ? o.metodo_pago : "efectivo";
     const clienteRaw = o.cliente_id;
     const clienteId =
       clienteRaw === null || clienteRaw === undefined || clienteRaw === ""
@@ -180,6 +184,7 @@ export async function POST(request: NextRequest) {
       tipoCambio,
       tipoVenta,
       plazoDias: Number.isFinite(plazoDias as number) ? plazoDias : null,
+      metodoPago,
       items,
       subtotalDeclarado,
       montoIvaDeclarado,
@@ -204,6 +209,7 @@ export async function POST(request: NextRequest) {
       tipo_cambio: tipoCambio,
       tipo_venta: tipoVenta,
       plazo_dias: tipoVenta === "CREDITO" ? plazoDias ?? undefined : undefined,
+      metodo_pago: metodoPago,
       subtotal: sub,
       monto_iva: iv,
       total: tot,

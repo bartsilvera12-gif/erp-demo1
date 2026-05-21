@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
     const ventasQ = await ctx.supabase
       .from("ventas")
       .select(
-        "id, empresa_id, numero_control, moneda, tipo_cambio, subtotal, monto_iva, total, tipo_venta, plazo_dias, fecha"
+        "id, empresa_id, numero_control, moneda, tipo_cambio, subtotal, monto_iva, total, tipo_venta, plazo_dias, metodo_pago, fecha"
       )
       .eq("empresa_id", empresaId)
       .order("fecha", { ascending: false })
@@ -99,6 +99,13 @@ export async function GET(request: NextRequest) {
         total: num(r.total),
         tipo_venta: r.tipo_venta === "CREDITO" ? "CREDITO" : "CONTADO",
         plazo_dias: r.plazo_dias ?? undefined,
+        metodo_pago: (r as unknown as { metodo_pago?: string }).metodo_pago === "tarjeta"
+          ? "tarjeta"
+          : (r as unknown as { metodo_pago?: string }).metodo_pago === "transferencia"
+          ? "transferencia"
+          : (r as unknown as { metodo_pago?: string }).metodo_pago === "efectivo"
+          ? "efectivo"
+          : undefined,
         fecha: r.fecha,
       };
     });

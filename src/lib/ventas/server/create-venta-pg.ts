@@ -31,6 +31,7 @@ export interface CreateVentaPgParams {
   tipoCambio: number;
   tipoVenta: "CONTADO" | "CREDITO";
   plazoDias: number | null;
+  metodoPago: "efectivo" | "tarjeta" | "transferencia" | null;
   items: CreateVentaItemInput[];
   subtotalDeclarado: number;
   montoIvaDeclarado: number;
@@ -174,6 +175,7 @@ export async function createVentaTransaccionalPg(
       estado: "completada",
       tipo_venta: params.tipoVenta,
       plazo_dias: params.plazoDias,
+      metodo_pago: params.metodoPago,
       fecha: fechaIso,
       observaciones: params.observaciones,
     })
