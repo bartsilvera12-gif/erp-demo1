@@ -1,23 +1,23 @@
 @import "tailwindcss";
 
-/* Neura ERP — En lo de Mari (color de marca teal #4FAEB2) */
+/* Neura ERP — En lo de Mari (color de marca teal #14B8A6) */
 :root {
   --background: #F8FAFC;
   --foreground: #0F172A;
   --foreground-muted: #475569;
   --card: #FFFFFF;
-  /* Sidebar: navy de fondo + acento teal de la marca Mari */
-  --zentra-sidebar: #0a2540;
-  --zentra-sidebar-elevated: #0c2d4d;
-  --zentra-sidebar-border: rgba(255, 255, 255, 0.08);
-  --zentra-sidebar-hover: rgba(255, 255, 255, 0.08);
-  --zentra-sidebar-active: rgba(79, 174, 178, 0.18);
-  --zentra-sidebar-accent: #4FAEB2;
-  --zentra-login-bg-mid: #0b2f4c;
-  --zentra-login-bg-deep: #051525;
+  /* Sidebar: teal oscuro #19585b base con gradiente sutil (top más claro, bottom más oscuro) */
+  --zentra-sidebar: #19585b;
+  --zentra-sidebar-elevated: #1d6669;
+  --zentra-sidebar-border: rgba(255, 255, 255, 0.10);
+  --zentra-sidebar-hover: rgba(255, 255, 255, 0.10);
+  --zentra-sidebar-active: rgba(255, 255, 255, 0.18);
+  --zentra-sidebar-accent: #14B8A6;
+  --zentra-login-bg-mid: #145053;
+  --zentra-login-bg-deep: #0a3437;
   --sidebar: var(--zentra-sidebar);
-  --primary: #4FAEB2;
-  --primary-hover: #3E8C90;
+  --primary: #14B8A6;
+  --primary-hover: #0F9488;
   --primary-light: #E0F2F3;
   --border: #E2E8F0;
   /* Badges de estado */
@@ -36,8 +36,8 @@
   --card: #1E293B;
   /* Lateral ERP: misma identidad en modo oscuro */
   --sidebar: var(--zentra-sidebar);
-  --primary: #4FAEB2;
-  --primary-hover: #3E8C90;
+  --primary: #14B8A6;
+  --primary-hover: #0F9488;
   --primary-light: #1E4D4F;
   --border: #334155;
   --badge-success-bg: #14532D;
@@ -123,27 +123,38 @@ body {
 }
 
 /* =============================================================================
-   Override de colores brand — Mari (#4FAEB2)
+   Override de colores brand — Mari (#14B8A6)
    Reemplaza usos hex literales (Tailwind arbitrary values) en toda la app
    sin tocar 293+ archivos. Solo afecta clases existentes; no toca semánticos
    (green/red/amber/etc.).
    ============================================================================= */
-.bg-\[\#0EA5E9\]   { background-color: #4FAEB2 !important; }
-.bg-\[\#0284C7\]   { background-color: #3E8C90 !important; }
-.bg-\[\#38BDF8\]   { background-color: #4FAEB2 !important; }
-.hover\:bg-\[\#0EA5E9\]:hover { background-color: #4FAEB2 !important; }
-.hover\:bg-\[\#0284C7\]:hover { background-color: #3E8C90 !important; }
+.bg-\[\#0EA5E9\]   { background-color: #14B8A6 !important; }
+.bg-\[\#0284C7\]   { background-color: #0F9488 !important; }
+.bg-\[\#38BDF8\]   { background-color: #14B8A6 !important; }
+.hover\:bg-\[\#0EA5E9\]:hover { background-color: #14B8A6 !important; }
+.hover\:bg-\[\#0284C7\]:hover { background-color: #0F9488 !important; }
 
-.text-\[\#0EA5E9\] { color: #4FAEB2 !important; }
-.text-\[\#0284C7\] { color: #3E8C90 !important; }
-.text-\[\#38BDF8\] { color: #4FAEB2 !important; }
-.hover\:text-\[\#0284C7\]:hover { color: #3E8C90 !important; }
+.text-\[\#0EA5E9\] { color: #14B8A6 !important; }
+.text-\[\#0284C7\] { color: #0F9488 !important; }
+.text-\[\#38BDF8\] { color: #14B8A6 !important; }
+.hover\:text-\[\#0284C7\]:hover { color: #0F9488 !important; }
 
-.border-\[\#0EA5E9\] { border-color: #4FAEB2 !important; }
-.border-\[\#0284C7\] { border-color: #3E8C90 !important; }
+.border-\[\#0EA5E9\] { border-color: #14B8A6 !important; }
+.border-\[\#0284C7\] { border-color: #0F9488 !important; }
 
-.focus\:ring-\[\#0EA5E9\]:focus { --tw-ring-color: #4FAEB2 !important; }
-.focus\:border-\[\#0EA5E9\]:focus { border-color: #4FAEB2 !important; }
+.focus\:ring-\[\#0EA5E9\]:focus { --tw-ring-color: #14B8A6 !important; }
+.focus\:border-\[\#0EA5E9\]:focus { border-color: #14B8A6 !important; }
+
+/* =============================================================================
+   Sidebar — gradiente sutil estilo Zentra (top más claro, bottom más oscuro).
+   Base #19585b. La luz cae hacia esquina superior derecha, sombra hacia abajo.
+   ============================================================================= */
+.zentra-sidebar-bg {
+  background:
+    radial-gradient(ellipse 120% 60% at 100% 0%, rgba(255, 255, 255, 0.06), transparent 55%),
+    radial-gradient(ellipse 120% 60% at 0% 0%, rgba(255, 255, 255, 0.04), transparent 55%),
+    linear-gradient(180deg, #1d6669 0%, #19585b 35%, #144649 100%);
+}
 
 
 
