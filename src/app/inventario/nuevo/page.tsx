@@ -242,28 +242,42 @@ export default function NuevoProductoPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    console.log("[inventario/nuevo] handleSubmit start", { tipoGastro });
     if (submitting) return;
     setErrorDuplicado(null);
     setErrorGeneral(null);
-
-    const codigoEnInput = form.codigo_barras.trim();
-    // Solo rechazar prefijo INT- si fue ESCRITO MANUALMENTE (no si vino del botón).
-    const esIntManual = !!codigoEnInput && /^INT-/i.test(codigoEnInput) && !codigoGeneradoInterno;
-    if (esIntManual) {
-      setErrorGeneral('El prefijo "INT-" está reservado para códigos internos generados por el sistema. Dejá el campo vacío y guardá, o usá el botón "Generar código interno".');
-      return;
-    }
-
-    const duplicado = await productoExiste(form.sku, form.nombre);
-    if (duplicado) {
-      setErrorDuplicado(
-        `Ya existe "${duplicado.nombre}" con SKU ${duplicado.sku}.`
-      );
-      return;
-    }
-
     setSubmitting(true);
+
+    const showErr = (msg: string) => {
+      setErrorGeneral(msg);
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+    };
+
     try {
+      // Validaciones básicas en JS (HTML5 desactivado con noValidate).
+      const nombreT = form.nombre.trim();
+      if (!nombreT) { showErr("El nombre es obligatorio."); return; }
+      if (tipoGastro === "reventa" && !form.sku.trim()) { showErr("El SKU es obligatorio para productos de reventa."); return; }
+
+      const codigoEnInput = form.codigo_barras.trim();
+      const esIntManual = !!codigoEnInput && /^INT-/i.test(codigoEnInput) && !codigoGeneradoInterno;
+      if (esIntManual) {
+        showErr('El prefijo "INT-" está reservado para códigos internos generados por el sistema. Dejá el campo vacío y guardá, o usá el botón "Generar código interno".');
+        return;
+      }
+
+      // Pre-chequeo duplicado tolerante a fallos de red.
+      try {
+        const duplicado = await productoExiste(form.sku, form.nombre);
+        if (duplicado) {
+          setErrorDuplicado(`Ya existe "${duplicado.nombre}" con SKU ${duplicado.sku}.`);
+          try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+          return;
+        }
+      } catch (err) {
+        console.warn("[inventario/nuevo] productoExiste failed, ignorando:", err);
+      }
       // Resolver codigo: si vino del botón → ya está en el input con interno=true.
       // Si el usuario escribió uno → manual (interno=false).
       // Si está vacío → pedir uno interno al backend.
@@ -312,13 +326,13 @@ export default function NuevoProductoPage() {
           tiempo_prep_minutos: Math.max(parseInt(tiempoPrepMinutos) || 0, 0),
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "No se pudo guardar el producto.";
-        setErrorGeneral(msg);
+        console.error("[inventario/nuevo] saveProducto error:", err);
+        showErr(err instanceof Error ? err.message : "No se pudo guardar el producto.");
         return;
       }
 
       if (!guardado) {
-        setErrorGeneral("No se pudo guardar el producto. Revisá los datos e intentá nuevamente.");
+        showErr("No se pudo guardar el producto. Revisá los datos e intentá nuevamente.");
         return;
       }
 
@@ -349,6 +363,9 @@ export default function NuevoProductoPage() {
       }
 
       router.push("/inventario");
+    } catch (err) {
+      console.error("[inventario/nuevo] handleSubmit error:", err);
+      showErr(err instanceof Error ? err.message : "No se pudo guardar el producto.");
     } finally {
       setSubmitting(false);
     }
@@ -456,7 +473,7 @@ export default function NuevoProductoPage() {
       </div>
 
       <div className="bg-white rounded-xl shadow p-6 max-w-5xl">
-        <form className="space-y-6" onSubmit={handleSubmit}>
+        <form className="space-y-6" onSubmit={handleSubmit} noValidate>
 
           {/* Error general (validacion de codigo, duplicado de codigo barras, etc.) */}
           {errorGeneral && (
@@ -924,7 +941,7 @@ export default function NuevoProductoPage() {
                   placeholder="Ej: 50"
                   className={inputClass}
                   min={0}
-                  required
+                  required={showStock}
                 />
               </div>
 
@@ -938,7 +955,7 @@ export default function NuevoProductoPage() {
                   placeholder="Ej: 10"
                   className={inputClass}
                   min={0}
-                  required
+                  required={showStock}
                 />
               </div>
             </div>
