@@ -236,10 +236,17 @@ export default function EditarProductoPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    console.log("[inventario/editar] handleSubmit start", { id });
     if (submitting) return;
     setErrorDuplicado(null);
     setErrorGeneral(null);
     setSubmitting(true);
+
+    const showErr = (msg: string) => {
+      setErrorGeneral(msg);
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+    };
 
     try {
       const codigoIngresado = form.codigo_barras.trim();
@@ -251,7 +258,7 @@ export default function EditarProductoPage() {
         /^INT-/i.test(codigoIngresado) &&
         !form.codigo_barras_interno
       ) {
-        setErrorGeneral('El prefijo "INT-" está reservado para códigos internos generados por el sistema. Usá otro código o dejá el actual.');
+        showErr('El prefijo "INT-" está reservado para códigos internos generados por el sistema. Usá otro código o dejá el actual.');
         return;
       }
 
@@ -261,6 +268,7 @@ export default function EditarProductoPage() {
         const duplicado = await productoExiste(form.sku, form.nombre);
         if (duplicado && duplicado.id !== id) {
           setErrorDuplicado(`Ya existe "${duplicado.nombre}" con SKU ${duplicado.sku}.`);
+          try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
           return;
         }
       } catch (err) {
@@ -297,15 +305,17 @@ export default function EditarProductoPage() {
           (form.codigo_barras_interno === true || /^INT-/i.test(codigoIngresado));
       }
 
+      console.log("[inventario/editar] sending PATCH", { id, payloadKeys: Object.keys(updatePayload) });
       const actualizado = await updateProducto(id, updatePayload);
+      console.log("[inventario/editar] PATCH result:", actualizado ? { id: actualizado.id, nombre: actualizado.nombre } : "null");
       if (actualizado) {
         router.push("/inventario");
       } else {
-        setErrorGeneral("No se pudo guardar los cambios. Revisá los datos e intentá nuevamente.");
+        showErr("No se pudo guardar los cambios. Revisá los datos e intentá nuevamente.");
       }
     } catch (err) {
       console.error("[inventario/editar] handleSubmit error:", err);
-      setErrorGeneral(err instanceof Error ? err.message : "No se pudieron guardar los cambios.");
+      showErr(err instanceof Error ? err.message : "No se pudieron guardar los cambios.");
     } finally {
       setSubmitting(false);
     }
@@ -354,7 +364,7 @@ export default function EditarProductoPage() {
       </div>
 
       <div className="bg-white rounded-xl shadow p-6 max-w-5xl">
-        <form className="space-y-6" onSubmit={handleSubmit}>
+        <form className="space-y-6" onSubmit={handleSubmit} noValidate>
           {errorGeneral && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-3">
               <p className="text-sm text-red-700">{errorGeneral}</p>
