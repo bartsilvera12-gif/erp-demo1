@@ -439,8 +439,16 @@ export default function Sidebar() {
       if (!cancelled) void cargarMenuDesdeSesion(session);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
+      // Skip eventos que NO cambian que modulos tiene el user:
+      //  - INITIAL_SESSION: ya cargado por el getSession() de arriba (duplicado).
+      //  - TOKEN_REFRESHED: Supabase refresca el JWT cada ~1h Y cuando la pestana
+      //    vuelve a estar visible. Los modulos del user no cambian por esto;
+      //    re-fetchear hace que el sidebar muestre "Cargando..." sin motivo
+      //    cada vez que el usuario vuelve a la tab del ERP.
+      // Eventos que SI re-cargan: SIGNED_IN, SIGNED_OUT, USER_UPDATED.
+      if (event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") return;
       void cargarMenuDesdeSesion(session);
     });
 
