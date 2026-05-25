@@ -634,7 +634,7 @@ export default function Sidebar() {
         </div>
       )}
 
-      <nav className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3">
+      <nav className="zentra-sidebar-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain p-3">
         {showMenuNoResults ? (
           <p className="px-2 py-6 text-center text-xs text-slate-400">Sin resultados</p>
         ) : null}
