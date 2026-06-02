@@ -306,9 +306,17 @@ export async function getDashboardData(): Promise<DashboardData> {
     dashboardNow.getMonth() - 13,
     dashboardNow.getDate()
   );
+  // `hasta` inclusivo del día de hoy: columnas como `ventas.fecha` son timestamps, y filtrar
+  // `<= hoy` lo interpretaba como medianoche → excluía todo lo cargado hoy. Usamos mañana como
+  // cota superior (exclusiva de facto) para incluir el día completo en ambos caminos (PostgREST/pg).
+  const dashboardHasta = new Date(
+    dashboardNow.getFullYear(),
+    dashboardNow.getMonth(),
+    dashboardNow.getDate() + 1
+  );
   const fmtYmd = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const dashboardRangeQs = `?desde=${fmtYmd(dashboardDesde)}&hasta=${fmtYmd(dashboardNow)}`;
+  const dashboardRangeQs = `?desde=${fmtYmd(dashboardDesde)}&hasta=${fmtYmd(dashboardHasta)}`;
 
   // ANTES: await fetchProspectos() corria PRIMERO de forma serial, despues
   // arrancaba el fetch de tenant-tables. Total = t_prospectos + t_tenant.

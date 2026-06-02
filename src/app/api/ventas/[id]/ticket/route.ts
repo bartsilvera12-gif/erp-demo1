@@ -17,7 +17,7 @@ import { getTenantSupabaseFromAuth } from "@/lib/supabase/tenant-api";
  * No toca SIFEN, no genera XML, no usa timbrado.
  */
 
-const NEGOCIO = "EN LO DE MARI";
+const NEGOCIO = "Demo";
 
 // ── Clasificación PIZZERÍA / PLANCHA ───────────────────────────────────────
 // Primary: categoría hija del producto. Fallback: prefijo de SKU.
