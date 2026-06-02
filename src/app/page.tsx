@@ -1619,13 +1619,13 @@ const DashInventario = memo(function DashInventario({
 
       {/* KPIs */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiCard icon="📦" label="Productos totales"      value={String(totalProductos)} color="text-[#0EA5E9]" variation={4} />
-        <KpiCard icon="🔢" label="Stock total (unidades)" value={formatGs(totalUnidades)} color="text-[#0EA5E9]" />
+        <KpiCard icon="📦" label="Productos totales"      value={String(totalProductos)} color="text-[#4FAEB2]" variation={4} />
+        <KpiCard icon="🔢" label="Stock total (unidades)" value={formatGs(totalUnidades)} color="text-[#4FAEB2]" />
         <KpiCard icon="⚠️" label="Bajo stock mínimo"      value={String(bajosStock)}
           sub={bajosStock > 0 ? "requieren reposición" : "todo en orden"}
-          color={bajosStock > 0 ? "text-red-600" : "text-[#0EA5E9]"}
+          color={bajosStock > 0 ? "text-red-600" : "text-[#4FAEB2]"}
           variation={bajosStock > 0 ? -2 : undefined} />
-        <KpiCard icon="💎" label="Valor del inventario"   value={`Gs. ${formatGsFull(valorTotal)}`} color="text-[#0EA5E9]" variation={12} />
+        <KpiCard icon="💎" label="Valor del inventario"   value={`Gs. ${formatGsFull(valorTotal)}`} color="text-[#4FAEB2]" variation={12} />
       </div>
 
       {/* Donut + Críticos */}
@@ -1652,7 +1652,7 @@ const DashInventario = memo(function DashInventario({
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <th className="w-10 px-3 py-3">
-                      <input type="checkbox" className="rounded border-slate-300 text-[#0EA5E9] focus:ring-[#0EA5E9]" />
+                      <input type="checkbox" className="rounded border-slate-300 text-[#4FAEB2] focus:ring-[#4FAEB2]" />
                     </th>
                     {["Producto", "Stock actual", "Stock mín.", "Estado", "Proveedor"].map(h => (
                       <th key={h} className="text-left text-xs font-semibold text-slate-500 px-3 py-3 uppercase tracking-wide">{h}</th>
@@ -1663,7 +1663,7 @@ const DashInventario = memo(function DashInventario({
                   {criticos.map(p => (
                     <tr key={p.id} className={`${p.stock_actual <= 0 ? "bg-red-50 hover:bg-red-100" : "bg-amber-50 hover:bg-amber-100"} transition-colors`}>
                       <td className="px-3 py-2.5">
-                        <input type="checkbox" className="rounded border-slate-300 text-[#0EA5E9] focus:ring-[#0EA5E9]" />
+                        <input type="checkbox" className="rounded border-slate-300 text-[#4FAEB2] focus:ring-[#4FAEB2]" />
                       </td>
                       <td className="px-3 py-2.5 text-sm font-semibold text-slate-900">{p.nombre}</td>
                       <td className="px-3 py-2.5">
@@ -1702,7 +1702,7 @@ const DashInventario = memo(function DashInventario({
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
                   <th className="w-10 px-3 py-3">
-                    <input type="checkbox" className="rounded border-slate-300 text-[#0EA5E9] focus:ring-[#0EA5E9]" />
+                    <input type="checkbox" className="rounded border-slate-300 text-[#4FAEB2] focus:ring-[#4FAEB2]" />
                   </th>
                   {["Producto", "SKU", "Stock", "Costo promedio", "Valor inventario"].map(h => (
                     <th key={h} className="text-left text-xs font-semibold text-slate-500 px-3 py-3 uppercase tracking-wide">{h}</th>
@@ -1711,15 +1711,15 @@ const DashInventario = memo(function DashInventario({
               </thead>
               <tbody className="divide-y divide-slate-200">
                 {topPorValor.map(p => (
-                  <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="px-3 py-2.5">
-                      <input type="checkbox" className="rounded border-slate-300 text-[#0EA5E9] focus:ring-[#0EA5E9]" />
+                  <tr key={p.id} className="hover:bg-[#4FAEB2]/5 transition-colors">
+                    <td className="px-3 py-3">
+                      <input type="checkbox" className="rounded border-slate-300 text-[#4FAEB2] focus:ring-[#4FAEB2]" />
                     </td>
-                    <td className="px-3 py-2.5 text-xs font-medium text-slate-800 dark:text-slate-200">{p.nombre}</td>
-                    <td className="px-3 py-2.5 font-mono text-xs text-slate-500 dark:text-slate-400">{p.sku}</td>
-                    <td className="px-3 py-2.5 text-xs tabular-nums text-slate-700 dark:text-slate-300">{p.stock_actual}</td>
-                    <td className="px-3 py-2.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">Gs. {formatGs(p.costo_promedio)}</td>
-                    <td className="px-3 py-2.5 text-xs tabular-nums font-semibold text-slate-800 dark:text-slate-200">Gs. {formatGs(p.valor)}</td>
+                    <td className="px-3 py-3 text-sm font-semibold text-slate-900">{p.nombre}</td>
+                    <td className="px-3 py-3 font-mono text-xs text-slate-500">{p.sku}</td>
+                    <td className="px-3 py-3 text-sm tabular-nums text-slate-700">{p.stock_actual}</td>
+                    <td className="px-3 py-3 text-sm tabular-nums text-slate-600">Gs. {formatGs(p.costo_promedio)}</td>
+                    <td className="px-3 py-3 text-sm font-bold tabular-nums text-[#2c7a7b]">Gs. {formatGs(p.valor)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1901,7 +1901,7 @@ const DashVentas = memo(function DashVentas({
               {desglose.map(r => (
                 <tr key={r.tipo} className="hover:bg-gray-50/60 transition-colors">
                   <td className="px-3 py-2.5">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.tipo === "CONTADO" ? "bg-[var(--badge-success-bg)] text-[var(--badge-success-text)]" : "bg-[#E0F2FE] text-[#0284C7]"}`}>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.tipo === "CONTADO" ? "bg-[var(--badge-success-bg)] text-[var(--badge-success-text)]" : "bg-[#E0F2FE] text-[#3f9aa0]"}`}>
                       {r.tipo}
                     </span>
                   </td>
@@ -2117,7 +2117,7 @@ export default function DashboardPage() {
           Cambiar a:
           {usuarios.filter(u => u.nivel !== "usuario").map(u => (
             <button key={u.id} onClick={() => handleUsuarioChange(u.id)}
-              className="px-3 py-1.5 rounded-lg bg-[#0EA5E9] hover:bg-[#0284C7] text-white text-xs font-medium transition-colors">
+              className="px-3 py-1.5 rounded-lg bg-[#4FAEB2] hover:bg-[#3f9aa0] text-white text-xs font-medium transition-colors">
               {u.nombre}
             </button>
           ))}
