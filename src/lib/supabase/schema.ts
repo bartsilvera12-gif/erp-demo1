@@ -6,7 +6,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * Override opcional vía NEURA_CLIENT_SCHEMA si se reusa el repo para otro cliente.
  */
 export const NEURA_CLIENT_SCHEMA: string =
-  (typeof process !== "undefined" && process.env.NEURA_CLIENT_SCHEMA?.trim()) || "enlodemari";
+  (typeof process !== "undefined" &&
+    // En el navegador SOLO existen las vars NEXT_PUBLIC_*; por eso el cliente browser
+    // necesita NEXT_PUBLIC_NEURA_CLIENT_SCHEMA (si no, cae al default y consulta el schema
+    // equivocado). En el server alcanza con NEURA_CLIENT_SCHEMA.
+    (process.env.NEURA_CLIENT_SCHEMA?.trim() ||
+      process.env.NEXT_PUBLIC_NEURA_CLIENT_SCHEMA?.trim())) ||
+  "demoerp";
 
 /**
  * Schema Postgres principal de la app.
