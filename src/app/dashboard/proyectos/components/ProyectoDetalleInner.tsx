@@ -325,7 +325,7 @@ export default function ProyectoDetalleInner({
   if (err && !data) return <div className="p-6 text-sm text-red-600">{err}</div>;
   if (!data || !proyecto) return null;
 
-  const panelCls = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
+  const panelCls = "rounded-2xl border border-slate-200 bg-white p-6 shadow-sm";
   const labelCls = "text-slate-500";
   const inputCls =
     "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-500 focus:border-[#4FAEB2] focus:outline-none focus:ring-2 focus:ring-[#4FAEB2]/30";
@@ -336,7 +336,7 @@ export default function ProyectoDetalleInner({
     <div
       className={
         variant === "modal"
-          ? "flex max-h-[94vh] flex-col p-4 sm:p-6"
+          ? "flex max-h-[94vh] flex-col gap-5 p-6 sm:p-7"
           : "mx-auto max-w-5xl space-y-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
       }
     >
@@ -348,54 +348,54 @@ export default function ProyectoDetalleInner({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-4">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
         <div className="min-w-0 flex-1">
           <h1
             id={variant === "modal" ? "proyecto-detalle-titulo" : undefined}
-            className="truncate text-xl font-semibold text-slate-900"
+            className="truncate text-2xl font-bold tracking-tight text-slate-900"
           >
             {String(proyecto.titulo ?? "")}
           </h1>
-          <p className="text-sm text-slate-500">
+          <p className="mt-1 text-sm text-slate-500">
             {(proyecto as { proyecto_tipo?: { nombre?: string } }).proyecto_tipo?.nombre ?? "—"} · Avance{" "}
             {data.avance_pct ?? "—"}%
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <select
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            value={String(proyecto.estado_id ?? "")}
-            onChange={(e) => void cambiarEstado(e.target.value)}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <select
+              className="cursor-pointer appearance-none rounded-full border border-[#4FAEB2]/40 bg-[#4FAEB2]/10 py-2 pl-4 pr-10 text-sm font-semibold text-[#2c7a7b] transition-colors hover:bg-[#4FAEB2]/20 focus:outline-none focus:ring-2 focus:ring-[#4FAEB2]/30"
+              value={String(proyecto.estado_id ?? "")}
+              onChange={(e) => void cambiarEstado(e.target.value)}
+            >
+              {estados.map((e) => (
+                <option key={e.id} value={e.id} className="text-slate-900">
+                  {e.nombre}
+                </option>
+              ))}
+            </select>
+            <svg
+              className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#4FAEB2]"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              aria-hidden="true"
+            >
+              <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z" clipRule="evenodd" />
+            </svg>
+          </div>
+          <button
+            type="button"
+            className="rounded-full border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100"
+            onClick={() => (variant === "modal" ? onClose?.() : router.push("/dashboard/proyectos"))}
           >
-            {estados.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.nombre}
-              </option>
-            ))}
-          </select>
-          {variant === "modal" ? (
-            <button
-              type="button"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100"
-              onClick={() => onClose?.()}
-            >
-              Cerrar
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 hover:bg-slate-100"
-              onClick={() => router.push("/dashboard/proyectos")}
-            >
-              Cerrar
-            </button>
-          )}
+            Cerrar
+          </button>
         </div>
       </div>
 
       {err ? <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{err}</div> : null}
 
-      <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-2">
+      <div className="flex flex-wrap gap-2 border-b border-slate-100 pb-3">
         {TAB_IDS.map((t) => (
           <button
             key={t}
@@ -414,27 +414,27 @@ export default function ProyectoDetalleInner({
 
       <div className={variant === "modal" ? "h-[60vh] overflow-y-auto overflow-x-hidden pr-1" : ""}>
         {tab === "resumen" ? (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-5 lg:grid-cols-2">
             <div className={panelCls}>
               <h2 className="text-sm font-semibold text-slate-800">Resumen del proyecto</h2>
-              <dl className="mt-4 space-y-3 text-sm">
-                <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+              <dl className="mt-5 space-y-4 text-sm">
+                <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                   <dt className={labelCls}>Cliente</dt>
                   <dd className="text-right text-slate-900">{clienteNombre(proyecto)}</dd>
                 </div>
-                <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                   <dt className={labelCls}>Vendedor / comercial</dt>
                   <dd className="text-right text-slate-900">
                     {(proyecto as { responsable_comercial?: { nombre?: string } }).responsable_comercial?.nombre ?? "—"}
                   </dd>
                 </div>
-                <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                   <dt className={labelCls}>Técnico responsable</dt>
                   <dd className="text-right text-slate-900">
                     {(proyecto as { responsable_tecnico?: { nombre?: string } }).responsable_tecnico?.nombre ?? "—"}
                   </dd>
                 </div>
-                <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                   <dt className={labelCls}>Fecha prometida</dt>
                   <dd className="text-right text-slate-900">
                     {proyecto.fecha_prometida != null && String(proyecto.fecha_prometida).trim() !== ""
@@ -444,13 +444,13 @@ export default function ProyectoDetalleInner({
                 </div>
                 {esSaas ? (
                   <>
-                    <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                    <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                       <dt className={labelCls}>Empresa SaaS / ERP</dt>
                       <dd className="max-w-[55%] text-right text-slate-900">
                         {saasForm.empresa_nombre.trim() || "—"}
                       </dd>
                     </div>
-                    <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                    <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                       <dt className={labelCls}>Módulos necesarios</dt>
                       <dd className="max-w-[55%] text-right text-slate-900">
                         {saasForm.modulos_necesarios.length > 0
@@ -458,7 +458,7 @@ export default function ProyectoDetalleInner({
                           : "—"}
                       </dd>
                     </div>
-                    <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                    <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                       <dt className={labelCls}>WhatsApp contacto</dt>
                       <dd className="max-w-[55%] text-right text-slate-900">
                         {saasForm.whatsapp_contacto.trim() || "—"}
@@ -467,19 +467,19 @@ export default function ProyectoDetalleInner({
                   </>
                 ) : (
                   <>
-                    <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                    <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                       <dt className={labelCls}>Nombre de la marca</dt>
                       <dd className="max-w-[55%] text-right text-slate-900">
                         {(briefCoerced.marca || "").trim() || "—"}
                       </dd>
                     </div>
-                    <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                    <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                       <dt className={labelCls}>Dominio a usar</dt>
                       <dd className="max-w-[55%] break-all text-right text-slate-900">
                         {(briefCoerced.dominio_usar || "").trim() || "—"}
                       </dd>
                     </div>
-                    <div className="flex justify-between gap-3 border-b border-slate-200 pb-2">
+                    <div className="flex justify-between gap-3 border-b border-slate-100 pb-3">
                       <dt className={labelCls}>Tipo de web</dt>
                       <dd className="max-w-[55%] text-right text-slate-900">
                         {(briefCoerced.tipo_web || "").trim() || "—"}
@@ -495,7 +495,7 @@ export default function ProyectoDetalleInner({
             </div>
             <div className={panelCls}>
               <h2 className="text-sm font-semibold text-slate-800">SLA acumulado</h2>
-              <dl className="mt-4 space-y-3 text-sm">
+              <dl className="mt-5 space-y-4 text-sm">
                 <div className="flex justify-between gap-2">
                   <dt className={labelCls}>Tiempo interno</dt>
                   <dd className="text-slate-900">{slaFmt?.interno}</dd>
