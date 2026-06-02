@@ -226,3 +226,58 @@ export async function PATCH(
     return NextResponse.json(errorResponse("No se pudo actualizar el producto."), { status: 500 });
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  ctxParams: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await ctxParams.params;
+    const ctx = await getTenantSupabaseFromAuth(request);
+    if (!ctx) return NextResponse.json(errorResponse(API_ERRORS.UNAUTHORIZED), { status: 401 });
+    const empresaId = ctx.auth.empresa_id;
+    const sb = ctx.supabase;
+
+    // Validar pertenencia a la empresa
+    const { data: prod, error: errGet } = await sb
+      .from("productos")
+      .select("id")
+      .eq("empresa_id", empresaId)
+      .eq("id", id)
+      .maybeSingle();
+    if (errGet) throw new Error(errGet.message);
+    if (!prod) return NextResponse.json(errorResponse(API_ERRORS.NOT_FOUND), { status: 404 });
+
+    // Limpiar puente de categorías (FK) antes de intentar el borrado físico
+    await sb.from("producto_categorias").delete().eq("empresa_id", empresaId).eq("producto_id", id);
+
+    // Borrado físico
+    const del = await sb.from("productos").delete().eq("empresa_id", empresaId).eq("id", id);
+    if (!del.error) {
+      return NextResponse.json(successResponse({ deleted: true, archived: false }));
+    }
+
+    // Si está referenciado (ventas, movimientos, etc.) → baja lógica para conservar historial
+    const msg = del.error.message ?? "";
+    const code = (del.error as { code?: string }).code ?? "";
+    const isFk = code === "23503" || /foreign key|violates|referenc/i.test(msg);
+    if (isFk) {
+      const upd = await sb
+        .from("productos")
+        .update({ activo: false })
+        .eq("empresa_id", empresaId)
+        .eq("id", id);
+      if (upd.error) {
+        console.error("[/api/productos/[id] DELETE soft]", upd.error.message);
+        return NextResponse.json(errorResponse("No se pudo eliminar el producto."), { status: 500 });
+      }
+      return NextResponse.json(successResponse({ deleted: true, archived: true }));
+    }
+
+    console.error("[/api/productos/[id] DELETE]", msg);
+    return NextResponse.json(errorResponse("No se pudo eliminar el producto."), { status: 500 });
+  } catch (err) {
+    console.error("[/api/productos/[id] DELETE] outer", err instanceof Error ? err.message : err);
+    return NextResponse.json(errorResponse("No se pudo eliminar el producto."), { status: 500 });
+  }
+}
