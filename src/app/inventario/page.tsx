@@ -412,16 +412,31 @@ export default function InventarioPage() {
                 return (
                   <tr key={p.id} className="border-b border-slate-200 last:border-0 hover:bg-[#4FAEB2]/[0.04] transition-colors">
                     <td className="py-4 pr-4 font-medium text-gray-800">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span>{p.nombre}</span>
-                        {(() => {
-                          const v = p.es_vendible !== false;
-                          const i = p.es_insumo === true;
-                          // Mixto/Insumo se siguen mostrando; Vendible queda oculto (redundante: ya hay tab).
-                          if (v && i) return <span className="inline-flex items-center rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium px-2 py-0.5">Mixto</span>;
-                          if (i) return <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-medium px-2 py-0.5">Insumo</span>;
-                          return null;
-                        })()}
+                      <div className="flex items-center gap-3">
+                        {p.imagen_url ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={p.imagen_url}
+                            alt={p.nombre}
+                            loading="lazy"
+                            className="h-10 w-10 shrink-0 rounded-lg border border-slate-200 object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-400">
+                            {(p.nombre || "?").slice(0, 1).toUpperCase()}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>{p.nombre}</span>
+                          {(() => {
+                            const v = p.es_vendible !== false;
+                            const i = p.es_insumo === true;
+                            // Mixto/Insumo se siguen mostrando; Vendible queda oculto (redundante: ya hay tab).
+                            if (v && i) return <span className="inline-flex items-center rounded-full bg-purple-100 text-purple-700 text-[10px] font-medium px-2 py-0.5">Mixto</span>;
+                            if (i) return <span className="inline-flex items-center rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-medium px-2 py-0.5">Insumo</span>;
+                            return null;
+                          })()}
+                        </div>
                       </div>
                     </td>
                     <td className="hidden py-4 pr-4 font-mono text-gray-500 lg:table-cell">{p.sku}</td>
